@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SEO Admin Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #262a33;
+    --text: #e6e8eb;
+    --muted: #9099a6;
+    --accent: #4f8cff;
+    --accent2: #33c17a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  select, input {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  button {
+    background: var(--accent);
+    border: none;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .stat-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 24px;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  .section-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+  .loading, .error { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
+  .error { color: #ff6b6b; }
+  tr:hover { background: rgba(255,255,255,0.02); }
+  body.share-mode .share-hide { display: none !important; }
+  body.share-mode .grid-2:has(.share-hide) { grid-template-columns: 1fr; }
+  #shareInfoBar { display: none; color: var(--muted); font-size: 13px; padding: 0 28px 12px; }
+  body.share-mode #shareInfoBar { display: block; }
+  body.share-mode .controls { display: none; }
+  .chart-action { float: right; font-size: 12px; color: var(--accent); text-decoration: none; }
+  .section-band { font-size:15px; color:var(--muted); margin: 30px 0 10px; text-transform:uppercase; letter-spacing:0.05em; }
+
+  /* --- Share Mode: light "client report" theme, matching the PDF export look --- */
+  body.share-mode {
+    --bg: #f2f4f7;
+    --card: #ffffff;
+    --border: #e2e5ea;
+    --text: #2b2f36;
+    --muted: #6b7280;
+  }
+  body.share-mode .section-band {
+    background: #1f2933;
+    color: #ffffff;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    letter-spacing: 0.03em;
+  }
+  body.share-mode .stat-card {
+    background: #2f8fd6;
+    border: none;
+  }
+  body.share-mode .stat-card .label { color: rgba(255,255,255,0.85); }
+  body.share-mode .stat-card .value { color: #ffffff; }
+  body.share-mode .chart-card { box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  body.share-mode #shareInfoBar {
+    background: #ffffff;
+    margin: 0 28px 20px;
+    padding: 14px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  /* --- Share link modal --- */
+  #shareModal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  #shareModal.open { display: flex; }
+  #shareModalBox {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    max-width: 480px;
+    width: 90%;
+  }
+  #shareModalBox .title { font-weight: 600; margin-bottom: 12px; }
+  #shareLinkInput {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 12px;
+  }
+  #shareModalActions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
+  #shareModalActions button.secondary { background: var(--border); color: var(--text); }
+  #copyStatus { font-size: 12px; color: var(--accent2); margin-top: 8px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<div id="shareModal">
+  <div id="shareModalBox">
+    <div class="title">Share link for client</div>
+    <input id="shareLinkInput" readonly onclick="this.select()">
+    <div id="copyStatus"></div>
+    <div id="shareModalActions">
+      <button class="secondary" onclick="closeShareModal()">Close</button>
+      <button onclick="copyShareLink()">Copy Link</button>
+    </div>
+  </div>
+</div>
+
+<header>
+  <h1>📊 SEO Client Dashboard</h1>
+  <div class="controls">
+    <select id="siteSelect"><option>Loading sites...</option></select>
+    <select id="rangePreset">
+      <option value="7">Last 7 days</option>
+      <option value="28" selected>Last 28 days</option>
+      <option value="90">Last 3 months</option>
+      <option value="180">Last 6 months</option>
+      <option value="365">Last 12 months</option>
+      <option value="480">Max available (~16 months)</option>
+      <option value="custom">Custom range</option>
+    </select>
+    <input type="date" id="startDate" style="display:none">
+    <input type="date" id="endDate" style="display:none">
+    <input type="text" id="ga4PropertyId" placeholder="GA4 Property ID" style="width:150px;">
+    <button onclick="loadAll()">Refresh</button>
+    
+  </div>
+</header>
+<div id="shareInfoBar"></div>
+
+<main>
+  <h2 class="section-band">Google Analytics</h2>
+  <div class="summary-grid" id="ga4SummaryGrid">
+    <div class="loading">Loading GA4 summary... (enter a Property ID above)</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="section-title">Active Users & Sessions Trend <a href="#" class="chart-action" onclick="return saveChartImage('ga4TrendChart')">📷 Save as Image</a></div>
+      <canvas id="ga4TrendChart" height="140"></canvas>
+    </div>
+    <div class="chart-card share-hide">
+      <div class="section-title">Traffic Sources</div>
+      <canvas id="ga4TrafficChart" height="140"></canvas>
+    </div>
+  </div>
+
+  
+
+  <div class="chart-card">
+    <div class="section-title">Clicks & Impressions Trend <a href="#" class="chart-action" onclick="return saveChartImage('trendChart')">📷 Save as Image</a></div>
+    <canvas id="trendChart" height="80"></canvas>
+  </div>
+
+
+  <div class="grid-2 share-hide">
+    <div class="chart-card">
+      <div class="section-title">Devices</div>
+      <canvas id="deviceChart" height="180"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="section-title">Top Countries <a href="#" onclick="return exportCsv('countries')" style="float:right; font-size:12px; color:var(--accent);">Export CSV</a></div>
+      <div id="countriesTable" class="loading">Loading...</div>
+    </div>
+  </div>
+
+  
+</main>
+
+<script>
+const API = "";
+let trendChart, deviceChart;
+
+const urlParams = new URLSearchParams(window.location.search);
+const isShareMode = urlParams.get("mode") === "share";
+const shareSite = urlParams.get("site");
+const shareProperty = urlParams.get("property");
+const shareStart = urlParams.get("start");
+const shareEnd = urlParams.get("end");
+
+async function fetchJSON(url, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    let res;
+    try {
+      res = await fetch(url);
+    } catch (networkErr) {
+      // real network/connection failure -> worth retrying
+      if (attempt === retries) throw networkErr;
+      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+      continue;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      // 4xx = bad input (e.g. invalid date range) — retrying won't help, fail immediately
+      if (res.status >= 400 && res.status < 500) {
+        throw new Error(body.detail || res.statusText);
+      }
+      if (attempt === retries) throw new Error(body.detail || res.statusText);
+      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+      continue;
+    }
+    return res.json();
+  }
+}
+
+function currentSite() {
+  if (isShareMode && shareSite) return shareSite;
+  return document.getElementById("siteSelect").value;
+}
+function computePresetRange(days) {
+  // GSC data has a ~3 day processing delay, so "today" isn't usable
+  const end = new Date();
+  end.setDate(end.getDate() - 3);
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { start: fmt(start), end: fmt(end) };
+}
+
+function applyPresetToInputs() {
+  const preset = document.getElementById("rangePreset").value;
+  const startInput = document.getElementById("startDate");
+  const endInput = document.getElementById("endDate");
+
+  if (preset === "custom") {
+    startInput.style.display = "inline-block";
+    endInput.style.display = "inline-block";
+    return;
+  }
+
+  startInput.style.display = "none";
+  endInput.style.display = "none";
+  const { start, end } = computePresetRange(parseInt(preset, 10));
+  startInput.value = start;
+  endInput.value = end;
+}
+
+function dateParams() {
+  if (isShareMode && shareStart && shareEnd) {
+    return `&start_date=${shareStart}&end_date=${shareEnd}`;
+  }
+  const s = document.getElementById("startDate").value;
+  const eVal = document.getElementById("endDate").value;
+  if (!s || !eVal) return "";
+  if (s > eVal) return "INVALID";
+  return `&start_date=${s}&end_date=${eVal}`;
+}
+
+function checkDatesOrShowError() {
+  const params = dateParams();
+  if (params === "INVALID") {
+    document.getElementById("summaryGrid").innerHTML =
+      `<div class="error">Start date must be before end date</div>`;
+    return false;
+  }
+  return true;
+}
+
+let siteGa4Map = {};
+
+async function loadSites() {
+  const sel = document.getElementById("siteSelect");
+  try {
+    const data = await fetchJSON(`${API}/api/sites`);
+    sel.innerHTML = data.sites.map(s => `<option value="${s}">${s}</option>`).join("");
+  } catch (e) {
+    sel.innerHTML = `<option>Error loading sites</option>`;
+  }
+  try {
+    siteGa4Map = await fetchJSON(`${API}/api/site-ga4-map`);
+  } catch (e) {
+    siteGa4Map = {};
+  }
+  applyGa4PropertyForSite();
+}
+
+function applyGa4PropertyForSite() {
+  const site = currentSite();
+  const propInput = document.getElementById("ga4PropertyId");
+  if (siteGa4Map[site]) {
+    propInput.value = siteGa4Map[site];
+  }
+  // if no mapping exists, leave whatever the user typed in place
+}
+
+async function loadSummary() {
+  const el = document.getElementById("summaryGrid");
+  try {
+    const [summary, comparison] = await Promise.all([
+      fetchJSON(`${API}/api/summary?site_url=${encodeURIComponent(currentSite())}${dateParams()}`),
+      fetchJSON(`${API}/api/comparison?site_url=${encodeURIComponent(currentSite())}${dateParams()}`).catch(() => null),
+    ]);
+    const d = summary;
+    const chg = comparison ? comparison.change : {};
+
+    const arrow = (pct, invert = false) => {
+      if (pct === null || pct === undefined) return "";
+      const good = invert ? pct < 0 : pct > 0;
+      const color = pct === 0 ? "var(--muted)" : (good ? "var(--accent2)" : "#ff6b6b");
+      const sign = pct > 0 ? "+" : "";
+      const symbol = pct > 0 ? "▲" : (pct < 0 ? "▼" : "—");
+      return `<span style="color:${color}; font-size:12px; margin-left:6px;">${symbol} ${sign}${pct}%</span>`;
+    };
+    const posArrow = (delta) => {
+      if (delta === null || delta === undefined) return "";
+      const good = delta < 0; // lower position number = better ranking
+      const color = delta === 0 ? "var(--muted)" : (good ? "var(--accent2)" : "#ff6b6b");
+      const sign = delta > 0 ? "+" : "";
+      const symbol = delta > 0 ? "▼" : (delta < 0 ? "▲" : "—");
+      return `<span style="color:${color}; font-size:12px; margin-left:6px;">${symbol} ${sign}${delta}</span>`;
+    };
+
+    el.innerHTML = `
+      <div class="stat-card"><div class="label">Clicks</div><div class="value">${d.clicks}${arrow(chg.clicks_pct)}</div></div>
+      <div class="stat-card"><div class="label">Impressions</div><div class="value">${d.impressions}${arrow(chg.impressions_pct)}</div></div>
+      <div class="stat-card"><div class="label">Avg CTR</div><div class="value">${d.ctr}%${arrow(chg.ctr_pct)}</div></div>
+      <div class="stat-card"><div class="label">Avg Position</div><div class="value">${d.position}${posArrow(chg.position_change)}</div></div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function loadTrend() {
+  const ctx = document.getElementById("trendChart");
+  try {
+    const d = await fetchJSON(`${API}/api/trend?site_url=${encodeURIComponent(currentSite())}${dateParams()}`);
+    const labels = d.rows.map(r => r.date);
+    const clicks = d.rows.map(r => r.clicks);
+    const impressions = d.rows.map(r => r.impressions);
+    if (trendChart) trendChart.destroy();
+    trendChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          { label: "Clicks", data: clicks, borderColor: "#4f8cff", tension: 0.3, yAxisID: "y" },
+          { label: "Impressions", data: impressions, borderColor: "#33c17a", tension: 0.3, yAxisID: "y1" },
+        ]
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: { position: "left", ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          y1: { position: "right", ticks: { color: "#9099a6" }, grid: { display: false } },
+          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+        },
+        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+      }
+    });
+  } catch (e) {
+    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
+  }
+}
+
+function renderTable(rows, keyName, keyLabel) {
+  if (!rows.length) return `<div class="loading">No data for this range</div>`;
+  return `
+    <table>
+      <thead><tr>
+        <th>${keyLabel}</th><th class="num">Clicks</th><th class="num">Impr.</th>
+        <th class="num">CTR</th><th class="num">Pos.</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td title="${r[keyName]}">${String(r[keyName]).slice(0, 45)}</td>
+            <td class="num">${r.clicks}</td>
+            <td class="num">${r.impressions}</td>
+            <td class="num">${r.ctr}%</td>
+            <td class="num">${r.position}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+async function loadQueries() {
+  const el = document.getElementById("queriesTable");
+  try {
+    const d = await fetchJSON(`${API}/api/queries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=15`);
+    el.innerHTML = renderTable(d.rows, "query", "Query");
+  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+async function loadPages() {
+  const el = document.getElementById("pagesTable");
+  try {
+    const d = await fetchJSON(`${API}/api/pages?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=15`);
+    el.innerHTML = renderTable(d.rows, "page", "Page");
+  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+async function loadCountries() {
+  const el = document.getElementById("countriesTable");
+  try {
+    const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
+    el.innerHTML = renderTable(d.rows, "country", "Country");
+  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+async function loadDevices() {
+  const ctx = document.getElementById("deviceChart");
+  try {
+    const d = await fetchJSON(`${API}/api/devices?site_url=${encodeURIComponent(currentSite())}${dateParams()}`);
+    if (deviceChart) deviceChart.destroy();
+    deviceChart = new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        labels: d.rows.map(r => r.device),
+        datasets: [{
+          data: d.rows.map(r => r.clicks),
+          backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d"]
+        }]
+      },
+      options: { plugins: { legend: { labels: { color: "#e6e8eb" } } } }
+    });
+  } catch (e) {
+    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
+  }
+}
+
+function renderMoversTable(rows, improved) {
+  if (!rows.length) return `<div class="loading">No comparable data for this range</div>`;
+  return `
+    <table>
+      <thead><tr>
+        <th>Query</th><th class="num">Prev. Pos.</th><th class="num">Now</th><th class="num">Change</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td title="${r.query}">${String(r.query).slice(0, 40)}</td>
+            <td class="num">${r.previous_position}</td>
+            <td class="num">${r.current_position}</td>
+            <td class="num" style="color:${improved ? 'var(--accent2)' : '#ff6b6b'}">
+              ${r.position_change > 0 ? '+' : ''}${r.position_change}
+            </td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+async function loadMovers() {
+  const gEl = document.getElementById("gainersTable");
+  const lEl = document.getElementById("losersTable");
+  try {
+    const d = await fetchJSON(`${API}/api/movers?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
+    gEl.innerHTML = renderMoversTable(d.gainers, true);
+    lEl.innerHTML = renderMoversTable(d.losers, false);
+  } catch (e) {
+    gEl.innerHTML = `<div class="error">${e.message}</div>`;
+    lEl.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function loadSitemaps() {
+  const el = document.getElementById("sitemapsTable");
+  try {
+    const d = await fetchJSON(`${API}/api/sitemaps?site_url=${encodeURIComponent(currentSite())}`);
+    if (!d.sitemaps.length) {
+      el.innerHTML = `<div class="loading">No sitemaps submitted for this property</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Path</th><th>Last Submitted</th><th class="num">Errors</th><th class="num">Warnings</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${d.sitemaps.map(s => `
+            <tr>
+              <td title="${s.path}">${s.path.slice(0, 50)}</td>
+              <td>${s.last_submitted ? s.last_submitted.slice(0, 10) : "—"}</td>
+              <td class="num" style="color:${s.errors > 0 ? '#ff6b6b' : 'inherit'}">${s.errors}</td>
+              <td class="num" style="color:${s.warnings > 0 ? '#f5a623' : 'inherit'}">${s.warnings}</td>
+              <td>${s.is_pending ? '⏳ Pending' : '✅ Processed'}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+function exportCsv(dataType) {
+  const url = `${API}/api/export/csv?site_url=${encodeURIComponent(currentSite())}&data_type=${dataType}${dateParams()}`;
+  window.open(url, "_blank");
+  return false;
+}
+
+let ga4TrendChart, ga4TrafficChart;
+
+function ga4PropertyId() {
+  if (isShareMode && shareProperty) return shareProperty;
+  return document.getElementById("ga4PropertyId").value.trim();
+}
+
+async function loadGa4Summary() {
+  const el = document.getElementById("ga4SummaryGrid");
+  const pid = ga4PropertyId();
+  if (!pid) { el.innerHTML = `<div class="loading">Enter a GA4 Property ID above to load Analytics data</div>`; return; }
+  try {
+    const d = await fetchJSON(`${API}/api/ga4/summary?property_id=${pid}${dateParams()}`);
+    const mins = Math.floor(d.avg_session_duration / 60);
+    const secs = Math.round(d.avg_session_duration % 60);
+    el.innerHTML = `
+      <div class="stat-card"><div class="label">New Users</div><div class="value">${d.new_users}</div></div>
+      <div class="stat-card"><div class="label">Total Users</div><div class="value">${d.total_users}</div></div>
+      <div class="stat-card"><div class="label">Sessions</div><div class="value">${d.sessions}</div></div>
+      <div class="stat-card"><div class="label">Views</div><div class="value">${d.views}</div></div>
+      <div class="stat-card"><div class="label">Bounce Rate</div><div class="value">${d.bounce_rate}%</div></div>
+      <div class="stat-card"><div class="label">Engagement Rate</div><div class="value">${d.engagement_rate}%</div></div>
+      <div class="stat-card"><div class="label">Events / Session</div><div class="value">${d.events_per_session}</div></div>
+      <div class="stat-card"><div class="label">Avg. Engagement Time</div><div class="value">${mins}:${String(secs).padStart(2,'0')}</div></div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function loadGa4Trend() {
+  const ctx = document.getElementById("ga4TrendChart");
+  const pid = ga4PropertyId();
+  if (!pid) return;
+  try {
+    const d = await fetchJSON(`${API}/api/ga4/trend?property_id=${pid}${dateParams()}`);
+    if (ga4TrendChart) ga4TrendChart.destroy();
+    ga4TrendChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: d.rows.map(r => r.date),
+        datasets: [
+          { label: "Active Users", data: d.rows.map(r => r.active_users), borderColor: "#4f8cff", tension: 0.3 },
+          { label: "Sessions", data: d.rows.map(r => r.sessions), borderColor: "#f5a623", tension: 0.3 },
+        ]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+        },
+        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+      }
+    });
+  } catch (e) {
+    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function loadGa4Traffic() {
+  const ctx = document.getElementById("ga4TrafficChart");
+  const pid = ga4PropertyId();
+  if (!pid) return;
+  try {
+    const d = await fetchJSON(`${API}/api/ga4/traffic?property_id=${pid}${dateParams()}`);
+    if (ga4TrafficChart) ga4TrafficChart.destroy();
+    ga4TrafficChart = new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        labels: d.rows.map(r => r.channel),
+        datasets: [{
+          data: d.rows.map(r => r.sessions),
+          backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d", "#a566ff", "#26c6da"]
+        }]
+      },
+      options: { plugins: { legend: { labels: { color: "#e6e8eb" } } } }
+    });
+  } catch (e) {
+    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function loadGa4Pages() {
+  const el = document.getElementById("ga4PagesTable");
+  const pid = ga4PropertyId();
+  if (!pid) { el.innerHTML = `<div class="loading">Enter a GA4 Property ID above</div>`; return; }
+  try {
+    const d = await fetchJSON(`${API}/api/ga4/pages?property_id=${pid}${dateParams()}&limit=15`);
+    if (!d.rows.length) { el.innerHTML = `<div class="loading">No data for this range</div>`; return; }
+    el.innerHTML = `
+      <table>
+        <thead><tr><th>Page</th><th class="num">Views</th><th class="num">Users</th></tr></thead>
+        <tbody>
+          ${d.rows.map(r => `
+            <tr>
+              <td title="${r.page}">${r.page.slice(0, 60)}</td>
+              <td class="num">${r.views}</td>
+              <td class="num">${r.users}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+function saveChartImage(chartId) {
+  const chartInstance = chartId === "trendChart" ? trendChart : ga4TrendChart;
+  if (!chartInstance) return false;
+  const link = document.createElement("a");
+  link.href = chartInstance.toBase64Image();
+  const safeSite = currentSite().replace(/[^a-z0-9]/gi, "_");
+  link.download = `${chartId}_${safeSite}.png`;
+  link.click();
+  return false;
+}
+
+function generateShareLink() {
+  const site = currentSite();
+  if (!site) { alert("Select a site first"); return; }
+  const property = ga4PropertyId();
+  const preset = document.getElementById("rangePreset").value;
+  let start, end;
+  if (preset === "custom") {
+    start = document.getElementById("startDate").value;
+    end = document.getElementById("endDate").value;
+  } else {
+    const r = computePresetRange(parseInt(preset, 10));
+    start = r.start; end = r.end;
+  }
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set("mode", "share");
+  url.searchParams.set("site", site);
+  if (property) url.searchParams.set("property", property);
+  url.searchParams.set("start", start);
+  url.searchParams.set("end", end);
+
+  document.getElementById("shareLinkInput").value = url.toString();
+  document.getElementById("copyStatus").textContent = "";
+  document.getElementById("shareModal").classList.add("open");
+  document.getElementById("shareLinkInput").select();
+}
+
+function closeShareModal() {
+  document.getElementById("shareModal").classList.remove("open");
+}
+
+function copyShareLink() {
+  const input = document.getElementById("shareLinkInput");
+  const status = document.getElementById("copyStatus");
+  input.focus();
+  input.select();
+  input.setSelectionRange(0, 99999); // mobile browsers
+
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (e) {
+    copied = false;
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(input.value).catch(() => {});
+  }
+
+  status.textContent = copied
+    ? "✅ Copied to clipboard!"
+    : "Couldn't auto-copy — the link is selected, press Ctrl+C to copy it manually.";
+}
+
+async function loadAll() {
+  if (!checkDatesOrShowError()) return;
+  loadSummary();
+  loadTrend();
+  loadGa4Summary();
+  loadGa4Trend();
+  if (!isShareMode) {
+    loadQueries();
+    loadPages();
+    loadCountries();
+    loadDevices();
+    loadMovers();
+    loadSitemaps();
+    loadGa4Traffic();
+    loadGa4Pages();
+  }
+}
+
+(async function init() {
+  if (isShareMode) {
+    document.body.classList.add("share-mode");
+    const range = (shareStart && shareEnd) ? `${shareStart} to ${shareEnd}` : "";
+    document.getElementById("shareInfoBar").textContent =
+      `Report for ${shareSite || "(site not specified)"} — ${range}`;
+    if (!shareSite) {
+      document.getElementById("summaryGrid").innerHTML =
+        `<div class="error">This share link is missing a site — ask your agency for a new link.</div>`;
+      return;
+    }
+    loadAll();
+    return;
+  }
+
+  await loadSites();
+  document.getElementById("siteSelect").addEventListener("change", () => {
+    applyGa4PropertyForSite();
+    loadAll();
+  });
+  document.getElementById("rangePreset").addEventListener("change", () => {
+    applyPresetToInputs();
+    loadAll();
+  });
+  applyPresetToInputs();
+  loadAll();
+})();
+</script>
+</body>
+</html>
