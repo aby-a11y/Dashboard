@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SEO Admin Dashboard</title>
+<title>SEO Client Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   :root {
@@ -76,6 +76,7 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px;
+    align-items: start;
   }
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -87,95 +88,10 @@
   .loading, .error { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
   .error { color: #ff6b6b; }
   tr:hover { background: rgba(255,255,255,0.02); }
-  body.share-mode .share-hide { display: none !important; }
-  body.share-mode .grid-2:has(.share-hide) { grid-template-columns: 1fr; }
-  #shareInfoBar { display: none; color: var(--muted); font-size: 13px; padding: 0 28px 12px; }
-  body.share-mode #shareInfoBar { display: block; }
-  body.share-mode .controls { display: none; }
-  .chart-action { float: right; font-size: 12px; color: var(--accent); text-decoration: none; }
-  .section-band { font-size:15px; color:var(--muted); margin: 30px 0 10px; text-transform:uppercase; letter-spacing:0.05em; }
-
-  /* --- Share Mode: light "client report" theme, matching the PDF export look --- */
-  body.share-mode {
-    --bg: #f2f4f7;
-    --card: #ffffff;
-    --border: #e2e5ea;
-    --text: #2b2f36;
-    --muted: #6b7280;
-  }
-  body.share-mode .section-band {
-    background: #1f2933;
-    color: #ffffff;
-    padding: 10px 16px;
-    border-radius: 6px;
-    font-size: 14px;
-    letter-spacing: 0.03em;
-  }
-  body.share-mode .stat-card {
-    background: #2f8fd6;
-    border: none;
-  }
-  body.share-mode .stat-card .label { color: rgba(255,255,255,0.85); }
-  body.share-mode .stat-card .value { color: #ffffff; }
-  body.share-mode .chart-card { box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-  body.share-mode #shareInfoBar {
-    background: #ffffff;
-    margin: 0 28px 20px;
-    padding: 14px 18px;
-    border-radius: 8px;
-    font-size: 14px;
-    color: var(--text);
-    font-weight: 600;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  }
-
-  /* --- Share link modal --- */
-  #shareModal {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.6);
-    z-index: 1000;
-    align-items: center;
-    justify-content: center;
-  }
-  #shareModal.open { display: flex; }
-  #shareModalBox {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 22px;
-    max-width: 480px;
-    width: 90%;
-  }
-  #shareModalBox .title { font-weight: 600; margin-bottom: 12px; }
-  #shareLinkInput {
-    width: 100%;
-    padding: 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text);
-    font-size: 12px;
-  }
-  #shareModalActions { margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end; }
-  #shareModalActions button.secondary { background: var(--border); color: var(--text); }
-  #copyStatus { font-size: 12px; color: var(--accent2); margin-top: 8px; min-height: 16px; }
+  .donut-wrap { position: relative; height: 220px; }
 </style>
 </head>
 <body>
-
-<div id="shareModal">
-  <div id="shareModalBox">
-    <div class="title">Share link for client</div>
-    <input id="shareLinkInput" readonly onclick="this.select()">
-    <div id="copyStatus"></div>
-    <div id="shareModalActions">
-      <button class="secondary" onclick="closeShareModal()">Close</button>
-      <button onclick="copyShareLink()">Copy Link</button>
-    </div>
-  </div>
-</div>
 
 <header>
   <h1>📊 SEO Client Dashboard</h1>
@@ -194,40 +110,55 @@
     <input type="date" id="endDate" style="display:none">
     <input type="text" id="ga4PropertyId" placeholder="GA4 Property ID" style="width:150px;">
     <button onclick="loadAll()">Refresh</button>
-    
+    <button onclick="window.location.href='/Client'">
+    Client Mode
+</button>
   </div>
 </header>
-<div id="shareInfoBar"></div>
 
 <main>
-  <h2 class="section-band">Google Analytics</h2>
+  <h2 style="font-size:15px; color:var(--muted); margin: 30px 0 10px; text-transform:uppercase; letter-spacing:0.05em;">Google Analytics</h2>
   <div class="summary-grid" id="ga4SummaryGrid">
     <div class="loading">Loading GA4 summary... (enter a Property ID above)</div>
   </div>
 
   <div class="grid-2">
     <div class="chart-card">
-      <div class="section-title">Active Users & Sessions Trend <a href="#" class="chart-action" onclick="return saveChartImage('ga4TrendChart')">📷 Save as Image</a></div>
+      <div class="section-title">Active Users & Sessions Trend</div>
       <canvas id="ga4TrendChart" height="140"></canvas>
     </div>
-    <div class="chart-card share-hide">
+    <div class="chart-card">
       <div class="section-title">Traffic Sources</div>
-      <canvas id="ga4TrafficChart" height="140"></canvas>
+      <div class="donut-wrap"><canvas id="ga4TrafficChart"></canvas></div>
     </div>
   </div>
 
-  
+
+
+  <h2 style="font-size:15px; color:var(--muted); margin: 30px 0 10px; text-transform:uppercase; letter-spacing:0.05em;">Google Search Console</h2>
+
+  <div class="summary-grid" id="summaryGrid">
+    <div class="loading">Loading summary...</div>
+  </div>
 
   <div class="chart-card">
-    <div class="section-title">Clicks & Impressions Trend <a href="#" class="chart-action" onclick="return saveChartImage('trendChart')">📷 Save as Image</a></div>
+    <div class="section-title">Clicks & Impressions Trend</div>
     <canvas id="trendChart" height="80"></canvas>
   </div>
 
+  <div class="grid-2">
+    
+  </div>
 
-  <div class="grid-2 share-hide">
+  <div class="grid-2">
+    
+   
+  </div>
+
+  <div class="grid-2">
     <div class="chart-card">
       <div class="section-title">Devices</div>
-      <canvas id="deviceChart" height="180"></canvas>
+      <div class="donut-wrap"><canvas id="deviceChart"></canvas></div>
     </div>
     <div class="chart-card">
       <div class="section-title">Top Countries <a href="#" onclick="return exportCsv('countries')" style="float:right; font-size:12px; color:var(--accent);">Export CSV</a></div>
@@ -242,27 +173,18 @@
 const API = "";
 let trendChart, deviceChart;
 
-const urlParams = new URLSearchParams(window.location.search);
-const isShareMode = urlParams.get("mode") === "share";
-const shareSite = urlParams.get("site");
-const shareProperty = urlParams.get("property");
-const shareStart = urlParams.get("start");
-const shareEnd = urlParams.get("end");
-
 async function fetchJSON(url, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     let res;
     try {
       res = await fetch(url);
     } catch (networkErr) {
-      // real network/connection failure -> worth retrying
       if (attempt === retries) throw networkErr;
       await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
       continue;
     }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      // 4xx = bad input (e.g. invalid date range) — retrying won't help, fail immediately
       if (res.status >= 400 && res.status < 500) {
         throw new Error(body.detail || res.statusText);
       }
@@ -275,11 +197,9 @@ async function fetchJSON(url, retries = 2) {
 }
 
 function currentSite() {
-  if (isShareMode && shareSite) return shareSite;
   return document.getElementById("siteSelect").value;
 }
 function computePresetRange(days) {
-  // GSC data has a ~3 day processing delay, so "today" isn't usable
   const end = new Date();
   end.setDate(end.getDate() - 3);
   const start = new Date(end);
@@ -307,9 +227,6 @@ function applyPresetToInputs() {
 }
 
 function dateParams() {
-  if (isShareMode && shareStart && shareEnd) {
-    return `&start_date=${shareStart}&end_date=${shareEnd}`;
-  }
   const s = document.getElementById("startDate").value;
   const eVal = document.getElementById("endDate").value;
   if (!s || !eVal) return "";
@@ -351,7 +268,6 @@ function applyGa4PropertyForSite() {
   if (siteGa4Map[site]) {
     propInput.value = siteGa4Map[site];
   }
-  // if no mapping exists, leave whatever the user typed in place
 }
 
 async function loadSummary() {
@@ -374,7 +290,7 @@ async function loadSummary() {
     };
     const posArrow = (delta) => {
       if (delta === null || delta === undefined) return "";
-      const good = delta < 0; // lower position number = better ranking
+      const good = delta < 0;
       const color = delta === 0 ? "var(--muted)" : (good ? "var(--accent2)" : "#ff6b6b");
       const sign = delta > 0 ? "+" : "";
       const symbol = delta > 0 ? "▼" : (delta < 0 ? "▲" : "—");
@@ -470,6 +386,32 @@ async function loadCountries() {
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
+/* Shared legend styling for both donut charts — explicit white text,
+   set per-item too so it can't fall back to a dark default. */
+function donutLegend() {
+  return {
+    position: "bottom",
+    labels: {
+      color: "#ffffff",
+      font: { size: 12, weight: "600" },
+      boxWidth: 10,
+      padding: 12,
+      generateLabels: function(chart) {
+        const ds = chart.data.datasets[0];
+        return chart.data.labels.map((label, i) => ({
+          text: `${label}  ${ds.data[i]}`,
+          fillStyle: ds.backgroundColor[i],
+          strokeStyle: ds.backgroundColor[i],
+          fontColor: "#ffffff",
+          color: "#ffffff",
+          hidden: false,
+          index: i
+        }));
+      }
+    }
+  };
+}
+
 async function loadDevices() {
   const ctx = document.getElementById("deviceChart");
   try {
@@ -484,7 +426,11 @@ async function loadDevices() {
           backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d"]
         }]
       },
-      options: { plugins: { legend: { labels: { color: "#e6e8eb" } } } }
+      options: {
+        maintainAspectRatio: false,
+        radius: "100%",
+        plugins: { legend: donutLegend() }
+      }
     });
   } catch (e) {
     ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
@@ -563,7 +509,6 @@ function exportCsv(dataType) {
 let ga4TrendChart, ga4TrafficChart;
 
 function ga4PropertyId() {
-  if (isShareMode && shareProperty) return shareProperty;
   return document.getElementById("ga4PropertyId").value.trim();
 }
 
@@ -636,7 +581,11 @@ async function loadGa4Traffic() {
           backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d", "#a566ff", "#26c6da"]
         }]
       },
-      options: { plugins: { legend: { labels: { color: "#e6e8eb" } } } }
+      options: {
+        maintainAspectRatio: false,
+        radius: "100%",
+        plugins: { legend: donutLegend() }
+      }
     });
   } catch (e) {
     ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
@@ -667,104 +616,23 @@ async function loadGa4Pages() {
   }
 }
 
-function saveChartImage(chartId) {
-  const chartInstance = chartId === "trendChart" ? trendChart : ga4TrendChart;
-  if (!chartInstance) return false;
-  const link = document.createElement("a");
-  link.href = chartInstance.toBase64Image();
-  const safeSite = currentSite().replace(/[^a-z0-9]/gi, "_");
-  link.download = `${chartId}_${safeSite}.png`;
-  link.click();
-  return false;
-}
-
-function generateShareLink() {
-  const site = currentSite();
-  if (!site) { alert("Select a site first"); return; }
-  const property = ga4PropertyId();
-  const preset = document.getElementById("rangePreset").value;
-  let start, end;
-  if (preset === "custom") {
-    start = document.getElementById("startDate").value;
-    end = document.getElementById("endDate").value;
-  } else {
-    const r = computePresetRange(parseInt(preset, 10));
-    start = r.start; end = r.end;
-  }
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.searchParams.set("mode", "share");
-  url.searchParams.set("site", site);
-  if (property) url.searchParams.set("property", property);
-  url.searchParams.set("start", start);
-  url.searchParams.set("end", end);
-
-  document.getElementById("shareLinkInput").value = url.toString();
-  document.getElementById("copyStatus").textContent = "";
-  document.getElementById("shareModal").classList.add("open");
-  document.getElementById("shareLinkInput").select();
-}
-
-function closeShareModal() {
-  document.getElementById("shareModal").classList.remove("open");
-}
-
-function copyShareLink() {
-  const input = document.getElementById("shareLinkInput");
-  const status = document.getElementById("copyStatus");
-  input.focus();
-  input.select();
-  input.setSelectionRange(0, 99999); // mobile browsers
-
-  let copied = false;
-  try {
-    copied = document.execCommand("copy");
-  } catch (e) {
-    copied = false;
-  }
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(input.value).catch(() => {});
-  }
-
-  status.textContent = copied
-    ? "✅ Copied to clipboard!"
-    : "Couldn't auto-copy — the link is selected, press Ctrl+C to copy it manually.";
-}
-
 async function loadAll() {
   if (!checkDatesOrShowError()) return;
   loadSummary();
   loadTrend();
+  loadQueries();
+  loadPages();
+  loadCountries();
+  loadDevices();
+  loadMovers();
+  loadSitemaps();
   loadGa4Summary();
   loadGa4Trend();
-  if (!isShareMode) {
-    loadQueries();
-    loadPages();
-    loadCountries();
-    loadDevices();
-    loadMovers();
-    loadSitemaps();
-    loadGa4Traffic();
-    loadGa4Pages();
-  }
+  loadGa4Traffic();
+  loadGa4Pages();
 }
 
 (async function init() {
-  if (isShareMode) {
-    document.body.classList.add("share-mode");
-    const range = (shareStart && shareEnd) ? `${shareStart} to ${shareEnd}` : "";
-    document.getElementById("shareInfoBar").textContent =
-      `Report for ${shareSite || "(site not specified)"} — ${range}`;
-    if (!shareSite) {
-      document.getElementById("summaryGrid").innerHTML =
-        `<div class="error">This share link is missing a site — ask your agency for a new link.</div>`;
-      return;
-    }
-    loadAll();
-    return;
-  }
-
   await loadSites();
   document.getElementById("siteSelect").addEventListener("change", () => {
     applyGa4PropertyForSite();

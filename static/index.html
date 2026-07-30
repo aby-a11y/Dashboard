@@ -76,6 +76,7 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px;
+    align-items: start;
   }
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -87,6 +88,7 @@
   .loading, .error { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
   .error { color: #ff6b6b; }
   tr:hover { background: rgba(255,255,255,0.02); }
+  .donut-wrap { position: relative; height: 220px; }
 </style>
 </head>
 <body>
@@ -111,6 +113,9 @@
     <button onclick="window.location.href='/Client'">
     Client Mode
 </button>
+<button id="downloadPdfBtn" onclick="generatePdf()">
+    Generate PDF Report
+</button>
   </div>
 </header>
 
@@ -127,7 +132,7 @@
     </div>
     <div class="chart-card">
       <div class="section-title">Traffic Sources</div>
-      <canvas id="ga4TrafficChart" height="140"></canvas>
+      <div class="donut-wrap"><canvas id="ga4TrafficChart"></canvas></div>
     </div>
   </div>
 
@@ -172,7 +177,7 @@
   <div class="grid-2">
     <div class="chart-card">
       <div class="section-title">Devices</div>
-      <canvas id="deviceChart" height="180"></canvas>
+      <div class="donut-wrap"><canvas id="deviceChart"></canvas></div>
     </div>
     <div class="chart-card">
       <div class="section-title">Top Countries <a href="#" onclick="return exportCsv('countries')" style="float:right; font-size:12px; color:var(--accent);">Export CSV</a></div>
@@ -196,14 +201,12 @@ async function fetchJSON(url, retries = 2) {
     try {
       res = await fetch(url);
     } catch (networkErr) {
-      // real network/connection failure -> worth retrying
       if (attempt === retries) throw networkErr;
       await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
       continue;
     }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      // 4xx = bad input (e.g. invalid date range) — retrying won't help, fail immediately
       if (res.status >= 400 && res.status < 500) {
         throw new Error(body.detail || res.statusText);
       }
@@ -219,7 +222,6 @@ function currentSite() {
   return document.getElementById("siteSelect").value;
 }
 function computePresetRange(days) {
-  // GSC data has a ~3 day processing delay, so "today" isn't usable
   const end = new Date();
   end.setDate(end.getDate() - 3);
   const start = new Date(end);
@@ -288,7 +290,6 @@ function applyGa4PropertyForSite() {
   if (siteGa4Map[site]) {
     propInput.value = siteGa4Map[site];
   }
-  // if no mapping exists, leave whatever the user typed in place
 }
 
 async function loadSummary() {
@@ -311,7 +312,7 @@ async function loadSummary() {
     };
     const posArrow = (delta) => {
       if (delta === null || delta === undefined) return "";
-      const good = delta < 0; // lower position number = better ranking
+      const good = delta < 0;
       const color = delta === 0 ? "var(--muted)" : (good ? "var(--accent2)" : "#ff6b6b");
       const sign = delta > 0 ? "+" : "";
       const symbol = delta > 0 ? "▼" : (delta < 0 ? "▲" : "—");
@@ -407,6 +408,32 @@ async function loadCountries() {
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
+/* Shared legend styling for both donut charts — explicit white text,
+   set per-item too so it can't fall back to a dark default. */
+function donutLegend() {
+  return {
+    position: "bottom",
+    labels: {
+      color: "#ffffff",
+      font: { size: 12, weight: "600" },
+      boxWidth: 10,
+      padding: 12,
+      generateLabels: function(chart) {
+        const ds = chart.data.datasets[0];
+        return chart.data.labels.map((label, i) => ({
+          text: `${label}  ${ds.data[i]}`,
+          fillStyle: ds.backgroundColor[i],
+          strokeStyle: ds.backgroundColor[i],
+          fontColor: "#ffffff",
+          color: "#ffffff",
+          hidden: false,
+          index: i
+        }));
+      }
+    }
+  };
+}
+
 async function loadDevices() {
   const ctx = document.getElementById("deviceChart");
   try {
@@ -421,7 +448,11 @@ async function loadDevices() {
           backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d"]
         }]
       },
-      options: { plugins: { legend: { labels: { color: "#e6e8eb" } } } }
+      options: {
+        maintainAspectRatio: false,
+        radius: "100%",
+        plugins: { legend: donutLegend() }
+      }
     });
   } catch (e) {
     ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
@@ -495,6 +526,26 @@ function exportCsv(dataType) {
   const url = `${API}/api/export/csv?site_url=${encodeURIComponent(currentSite())}&data_type=${dataType}${dateParams()}`;
   window.open(url, "_blank");
   return false;
+}
+
+function generatePdf() {
+  const siteUrl = currentSite();
+  const propertyId = ga4PropertyId();
+  const startDate = document.getElementById("startDate").value;
+  const endDate = document.getElementById("endDate").value;
+
+  if (!siteUrl || !propertyId || !startDate || !endDate) {
+    alert("Site, GA4 Property ID and dates are required");
+    return;
+  }
+
+  const url =
+    `${API}/report/pdf?site_url=${encodeURIComponent(siteUrl)}` +
+    `&property_id=${encodeURIComponent(propertyId)}` +
+    `&start_date=${encodeURIComponent(startDate)}` +
+    `&end_date=${encodeURIComponent(endDate)}`;
+
+  window.open(url, "_blank");
 }
 
 let ga4TrendChart, ga4TrafficChart;
@@ -572,7 +623,11 @@ async function loadGa4Traffic() {
           backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d", "#a566ff", "#26c6da"]
         }]
       },
-      options: { plugins: { legend: { labels: { color: "#e6e8eb" } } } }
+      options: {
+        maintainAspectRatio: false,
+        radius: "100%",
+        plugins: { legend: donutLegend() }
+      }
     });
   } catch (e) {
     ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;

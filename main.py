@@ -17,6 +17,8 @@ from google.api_core.exceptions import GoogleAPICallError
 
 import gsc_client
 import ga4_client
+from pdf_report import generate_pdf
+from fastapi.responses import StreamingResponse
 
 app = FastAPI(title="SEO Client Dashboard API")
 
@@ -218,3 +220,25 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 def serve_dashboard():
     return FileResponse("static/index.html")
+
+@app.get("/report/pdf")
+def pdf_report(
+    site_url: str,
+    property_id: str,
+    start_date: str,
+    end_date: str
+):
+
+    pdf = generate_pdf(
+        site_url,
+        property_id,
+        start_date,
+        end_date
+    )
+    return StreamingResponse(
+        pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline; filename=seo_report.pdf"
+        }
+    )
