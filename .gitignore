@@ -3,3 +3,4 @@ site_secret.json
 token.json
 venv
 site_ga4_map.json
+__pycache__
