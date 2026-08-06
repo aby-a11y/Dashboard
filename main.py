@@ -7,16 +7,21 @@ Then open: http://127.0.0.1:8000
 """
 
 import datetime
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Header, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
+import requests
+import jwt as pyjwt
 from googleapiclient.errors import HttpError
 from google.api_core.exceptions import GoogleAPICallError
 
 import gsc_client
 import ga4_client
+import serper_client
+import client_auth
 from pdf_report import generate_pdf
 from fastapi.responses import StreamingResponse
 
@@ -61,6 +66,267 @@ def _call(fn, *args, **kwargs):
         raise HTTPException(status_code=status, detail=ex.message or str(ex))
     except Exception as ex:
         raise HTTPException(status_code=500, detail=str(ex))
+
+
+def get_client_site(authorization: Optional[str] = Header(None)) -> str:
+    """Auth dependency for every /api/client/* endpoint. Resolves the
+    caller's site_url strictly from their JWT — the client never gets
+    to pass site_url themselves, so they physically cannot request
+    another client's data."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = client_auth.decode_token(token)
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired, please log in again")
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+    return payload["site_url"]
+
+
+# ---------------- Client login + client-scoped data (site locked to their own) ----------------
+
+class ClientLoginBody(BaseModel):
+    client_id: str
+    password: str
+
+
+@app.post("/api/client/login")
+def api_client_login(body: ClientLoginBody):
+    record = client_auth.authenticate(body.client_id, body.password)
+    if not record:
+        raise HTTPException(status_code=401, detail="Invalid client ID or password")
+    token = client_auth.issue_token(body.client_id, record["site_url"])
+    return {
+        "token": token,
+        "site_url": record["site_url"],
+        "name": record.get("name"),
+        "ga4_property_id": record.get("ga4_property_id"),
+    }
+
+
+@app.get("/api/client/report-link")
+def api_client_report_link(site_url: str = Depends(get_client_site)):
+    return {"site_url": site_url, "drive_link": client_auth.get_report_link(site_url)}
+
+
+@app.get("/api/client/summary")
+def api_client_summary(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                        site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    data = _call(gsc_client.get_summary, site_url, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, **data}
+
+
+@app.get("/api/client/queries")
+def api_client_queries(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                        limit: int = Query(25, le=1000), site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gsc_client.get_queries, site_url, s, e, limit)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/pages")
+def api_client_pages(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                      limit: int = Query(25, le=1000), site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gsc_client.get_pages, site_url, s, e, limit)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/devices")
+def api_client_devices(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                        site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gsc_client.get_devices, site_url, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/countries")
+def api_client_countries(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                          limit: int = Query(15, le=250), site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gsc_client.get_countries, site_url, s, e, limit)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/trend")
+def api_client_trend(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                      site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gsc_client.get_trend, site_url, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/movers")
+def api_client_movers(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                       limit: int = Query(10, le=50), site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    return _call(gsc_client.get_movers, site_url, s, e, limit)
+
+
+@app.get("/api/client/sitemaps")
+def api_client_sitemaps(site_url: str = Depends(get_client_site)):
+    return {"site_url": site_url, "sitemaps": _call(gsc_client.get_sitemaps, site_url)}
+
+
+@app.get("/api/client/comparison")
+def api_client_comparison(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                           site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    return _call(gsc_client.get_comparison, site_url, s, e)
+
+
+@app.get("/api/client/rank-tracker")
+def api_client_rank_tracker(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                             site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    keywords = gsc_client.get_tracked_keywords(site_url)
+    if not keywords:
+        return {"site_url": site_url, "start_date": s, "end_date": e, "rows": []}
+    rows = _call(gsc_client.get_rank_tracker_summary, site_url, keywords, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/rank-tracker/history")
+def api_client_rank_tracker_history(keyword: str, start_date: Optional[str] = None,
+                                     end_date: Optional[str] = None, site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gsc_client.get_keyword_position_history, site_url, keyword, s, e)
+    return {"site_url": site_url, "keyword": keyword, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/serper/rankings")
+def api_client_serper_rankings(site_url: str = Depends(get_client_site)):
+    """Read-only cached view — clients never trigger a paid Serper refresh themselves."""
+    return {"site_url": site_url, "rows": serper_client.get_cached_rankings(site_url)}
+
+
+@app.get("/api/client/tracked-keywords")
+def api_client_tracked_keywords(site_url: str = Depends(get_client_site)):
+    """Read-only — the SEO team manages which keywords are tracked, via the admin dashboard."""
+    return {"site_url": site_url, "keywords": gsc_client.get_tracked_keywords(site_url)}
+
+
+@app.get("/api/client/export/csv")
+def api_client_export_csv(data_type: str = Query(..., pattern="^(queries|pages|devices|countries|trend)$"),
+                           start_date: Optional[str] = None, end_date: Optional[str] = None,
+                           limit: int = Query(1000, le=5000), site_url: str = Depends(get_client_site)):
+    import csv
+    import io
+
+    s, e = _dates(start_date, end_date)
+    fetchers = {
+        "queries": lambda: gsc_client.get_queries(site_url, s, e, limit),
+        "pages": lambda: gsc_client.get_pages(site_url, s, e, limit),
+        "devices": lambda: gsc_client.get_devices(site_url, s, e),
+        "countries": lambda: gsc_client.get_countries(site_url, s, e, limit),
+        "trend": lambda: gsc_client.get_trend(site_url, s, e),
+    }
+    rows = _call(fetchers[data_type])
+
+    buf = io.StringIO()
+    if rows:
+        writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    buf.seek(0)
+
+    filename = f"{data_type}_{s}_to_{e}.csv"
+    return StreamingResponse(
+        buf, media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.get("/api/client/ga4/summary")
+def api_client_ga4_summary(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                            site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    data = _call(ga4_client.get_summary, property_id, s, e)
+    return {"site_url": site_url, "property_id": property_id, "start_date": s, "end_date": e, **data}
+
+
+@app.get("/api/client/ga4/trend")
+def api_client_ga4_trend(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                          site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(ga4_client.get_trend, property_id, s, e)
+    return {"site_url": site_url, "property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/ga4/traffic")
+def api_client_ga4_traffic(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                            site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(ga4_client.get_traffic_sources, property_id, s, e)
+    return {"site_url": site_url, "property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/client/ga4/pages")
+def api_client_ga4_pages(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                          limit: int = Query(15, le=200), site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(ga4_client.get_top_pages, property_id, s, e, limit)
+    return {"site_url": site_url, "property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
+
+
+# ---------------- Admin: manage client logins + report links ----------------
+# NOTE: these are unauthenticated, matching the rest of this internal-only
+# admin app (index.html itself has no login either). Keep this app behind
+# a VPN / IP allowlist / reverse-proxy auth if it's reachable from the
+# public internet.
+
+class AdminClientBody(BaseModel):
+    client_id: str
+    site_url: str
+    password: Optional[str] = None  # omit when just updating name/site/ga4 id
+    name: Optional[str] = None
+    ga4_property_id: Optional[str] = None
+
+
+@app.post("/api/admin/clients")
+def api_admin_create_client(body: AdminClientBody):
+    try:
+        return client_auth.create_or_update_client(
+            body.client_id, body.site_url, body.password, body.name, body.ga4_property_id
+        )
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+
+
+@app.get("/api/admin/clients")
+def api_admin_list_clients():
+    return {"clients": client_auth.list_clients()}
+
+
+@app.delete("/api/admin/clients/{client_id}")
+def api_admin_delete_client(client_id: str):
+    if not client_auth.delete_client(client_id):
+        raise HTTPException(status_code=404, detail="No such client_id")
+    return {"status": "deleted", "client_id": client_id}
+
+
+class ReportLinkBody(BaseModel):
+    site_url: str
+    drive_link: str
+
+
+@app.post("/api/admin/report-link")
+def api_admin_set_report_link(body: ReportLinkBody):
+    client_auth.set_report_link(body.site_url, body.drive_link)
+    return {"site_url": body.site_url, "drive_link": body.drive_link}
+
+
+@app.get("/api/admin/report-link")
+def api_admin_get_report_link(site_url: str):
+    return {"site_url": site_url, "drive_link": client_auth.get_report_link(site_url)}
+
+
+@app.get("/client-login")
+def client_login_page():
+    return FileResponse("static/client-login.html")
 
 
 @app.get("/api/sites")
@@ -180,6 +446,88 @@ def api_export_csv(site_url: str, data_type: str = Query(..., pattern="^(queries
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ---------------- Rank Tracker (GSC-based) endpoints ----------------
+
+class TrackedKeywordsBody(BaseModel):
+    site_url: str
+    keywords: List[str]
+
+
+@app.get("/api/tracked-keywords")
+def api_get_tracked_keywords(site_url: str):
+    return {"site_url": site_url, "keywords": gsc_client.get_tracked_keywords(site_url)}
+
+
+@app.post("/api/tracked-keywords")
+def api_set_tracked_keywords(body: TrackedKeywordsBody):
+    keywords = gsc_client.set_tracked_keywords(body.site_url, body.keywords)
+    return {"site_url": body.site_url, "keywords": keywords}
+
+
+@app.get("/api/rank-tracker")
+def api_rank_tracker(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    s, e = _dates(start_date, end_date)
+    keywords = gsc_client.get_tracked_keywords(site_url)
+    if not keywords:
+        return {"site_url": site_url, "start_date": s, "end_date": e, "rows": []}
+    rows = _call(gsc_client.get_rank_tracker_summary, site_url, keywords, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/rank-tracker/history")
+def api_rank_tracker_history(site_url: str, keyword: str,
+                              start_date: Optional[str] = None, end_date: Optional[str] = None):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gsc_client.get_keyword_position_history, site_url, keyword, s, e)
+    return {"site_url": site_url, "keyword": keyword, "start_date": s, "end_date": e, "rows": rows}
+
+
+# ---------------- True Rank Tracker (Serper.dev — live Google position) ----------------
+
+class SerperKeywordsBody(BaseModel):
+    site_url: str
+    keywords: List[str]
+
+
+class SerperRefreshBody(BaseModel):
+    site_url: str
+    location: Optional[str] = None
+    gl: str = "us"
+
+
+@app.get("/api/serper/tracked-keywords")
+def api_serper_get_keywords(site_url: str):
+    return {"site_url": site_url, "keywords": serper_client.get_tracked_keywords(site_url)}
+
+
+@app.post("/api/serper/tracked-keywords")
+def api_serper_set_keywords(body: SerperKeywordsBody):
+    keywords = serper_client.set_tracked_keywords(body.site_url, body.keywords)
+    return {"site_url": body.site_url, "keywords": keywords}
+
+
+@app.get("/api/serper/rankings")
+def api_serper_rankings(site_url: str):
+    """Read-only — returns the last cached check. Does NOT call Serper, so it's free to load."""
+    return {"site_url": site_url, "rows": serper_client.get_cached_rankings(site_url)}
+
+
+@app.post("/api/serper/refresh")
+def api_serper_refresh(body: SerperRefreshBody):
+    """Actually queries Serper for every tracked keyword on this site.
+    Each keyword tracked = 1 paid API credit — only call this on demand."""
+    keywords = serper_client.get_tracked_keywords(body.site_url)
+    if not keywords:
+        return {"site_url": body.site_url, "rows": []}
+    try:
+        rows = serper_client.refresh_rankings(body.site_url, keywords, location=body.location, gl=body.gl)
+    except RuntimeError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    except requests.exceptions.RequestException as ex:
+        raise HTTPException(status_code=502, detail=f"Serper API error: {ex}")
+    return {"site_url": body.site_url, "rows": rows}
 
 
 # ---------------- GA4 endpoints ----------------

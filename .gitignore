@@ -4,3 +4,9 @@ token.json
 venv
 site_ga4_map.json
 __pycache__
+.env
+serper_rank_cache.json
+tracked_keywords.json
+serper_keywords.json
+clients id password dashboard.txt
+clients.json

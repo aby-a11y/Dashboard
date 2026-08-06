@@ -116,8 +116,35 @@
 <button id="downloadPdfBtn" onclick="generatePdf()">
     Generate PDF Report
 </button>
+<button onclick="toggleClientAccessPanel()">👤 Client Access</button>
   </div>
 </header>
+
+<div id="clientAccessPanel" style="display:none; margin: 0 28px 24px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 20px; max-width:1300px; margin-left:auto; margin-right:auto;">
+  <div class="section-title">Client Access — logins &amp; report links</div>
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap:10px; margin-bottom:12px;">
+    <input type="text" id="caClientId" placeholder="Client ID (login username)">
+    <input type="password" id="caPassword" placeholder="Password (leave blank to keep existing)">
+    <input type="text" id="caSiteUrl" placeholder="Site URL (as in GSC, e.g. sc-domain:example.com)">
+    <input type="text" id="caName" placeholder="Display name (optional)">
+    <input type="text" id="caGa4PropertyId" placeholder="GA4 Property ID (optional)">
+  </div>
+  <div style="display:flex; gap:10px; margin-bottom:16px;">
+    <button onclick="saveClientAccess()">Save Client Login</button>
+    <span id="caStatus" style="color:var(--muted); font-size:13px; align-self:center;"></span>
+  </div>
+
+  <div style="display:grid; grid-template-columns: 2fr 1fr; gap:10px; margin-bottom:12px;">
+    <input type="text" id="rlSiteUrl" placeholder="Site URL to set report link for">
+    <input type="text" id="rlDriveLink" placeholder="Google Drive report link (URL)">
+  </div>
+  <div style="display:flex; gap:10px; margin-bottom:16px;">
+    <button onclick="saveReportLink()">Save Report Link</button>
+    <span id="rlStatus" style="color:var(--muted); font-size:13px; align-self:center;"></span>
+  </div>
+
+  <div id="clientListTable" class="loading">Loading client logins...</div>
+</div>
 
 <main>
   <h2 style="font-size:15px; color:var(--muted); margin: 30px 0 10px; text-transform:uppercase; letter-spacing:0.05em;">Google Analytics</h2>
@@ -188,6 +215,34 @@
   <div class="chart-card">
     <div class="section-title">🗺️ Sitemap Status</div>
     <div id="sitemapsTable" class="loading">Loading...</div>
+  </div>
+
+  <div class="chart-card">
+    <div class="section-title">🎯 Rank Tracker <span style="color:var(--muted); font-weight:400;">(tracked keywords, GSC position)</span></div>
+    <div style="display:flex; gap:8px; margin-bottom:12px;">
+      <input type="text" id="newKeywordInput" placeholder="Add a keyword to track..." style="flex:1;" onkeydown="if(event.key==='Enter') addKeyword()">
+      <button onclick="addKeyword()">Add</button>
+    </div>
+    <div id="keywordChips" style="margin-bottom:14px;"></div>
+    <div id="rankTrackerTable" class="loading">Loading...</div>
+  </div>
+
+  <div class="chart-card" id="rankHistoryCard" style="display:none;">
+    <div class="section-title" id="rankHistoryTitle">Position History</div>
+    <canvas id="rankHistoryChart" height="80"></canvas>
+  </div>
+
+  <div class="chart-card">
+    <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position via Serper)</span></div>
+    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+      <input type="text" id="newSerperKeywordInput" placeholder="Add a keyword to track..." style="flex:1; min-width:180px;" onkeydown="if(event.key==='Enter') addSerperKeyword()">
+      <button onclick="addSerperKeyword()">Add</button>
+      <input type="text" id="serperGl" placeholder="Country (gl)" value="us" style="width:110px;">
+      <input type="text" id="serperLocation" placeholder="Location (optional, e.g. Mumbai, Maharashtra, India)" style="width:260px;">
+      <button onclick="refreshSerperRankings()" id="serperRefreshBtn" style="background:var(--accent2);">Check Rankings Now</button>
+    </div>
+    <div id="serperKeywordChips" style="margin-bottom:14px;"></div>
+    <div id="serperRankTable" class="loading">Loading...</div>
   </div>
 </main>
 
@@ -522,6 +577,243 @@ async function loadSitemaps() {
   }
 }
 
+let rankHistoryChart;
+let trackedKeywords = [];
+
+function renderKeywordChips() {
+  const el = document.getElementById("keywordChips");
+  if (!trackedKeywords.length) {
+    el.innerHTML = `<div class="loading">No keywords tracked yet — add one above</div>`;
+    return;
+  }
+  el.innerHTML = trackedKeywords.map(kw => `
+    <span style="display:inline-flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:4px 10px; margin:0 6px 6px 0; font-size:12px;">
+      ${kw}
+      <span onclick="removeKeyword('${kw.replace(/'/g, "\\'")}')" style="cursor:pointer; color:#ff6b6b;">×</span>
+    </span>`).join("");
+}
+
+async function loadTrackedKeywords() {
+  try {
+    const d = await fetchJSON(`${API}/api/tracked-keywords?site_url=${encodeURIComponent(currentSite())}`);
+    trackedKeywords = d.keywords;
+  } catch (e) {
+    trackedKeywords = [];
+  }
+  renderKeywordChips();
+}
+
+async function saveTrackedKeywords() {
+  renderKeywordChips();
+  try {
+    await fetch(`${API}/api/tracked-keywords`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site_url: currentSite(), keywords: trackedKeywords }),
+    });
+  } catch (e) { /* will resync on next reload */ }
+  loadRankTracker();
+}
+
+function addKeyword() {
+  const input = document.getElementById("newKeywordInput");
+  const kw = input.value.trim();
+  input.value = "";
+  if (!kw) return;
+  if (trackedKeywords.some(k => k.toLowerCase() === kw.toLowerCase())) return;
+  trackedKeywords.push(kw);
+  saveTrackedKeywords();
+}
+
+function removeKeyword(kw) {
+  trackedKeywords = trackedKeywords.filter(k => k !== kw);
+  saveTrackedKeywords();
+}
+
+function renderRankTable(rows) {
+  if (!rows.length) return `<div class="loading">No keywords tracked yet — add some above</div>`;
+  return `
+    <table>
+      <thead><tr>
+        <th>Keyword</th><th class="num">Position</th><th class="num">Prev.</th>
+        <th class="num">Change</th><th class="num">Clicks</th><th class="num">Impr.</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr style="cursor:pointer;" onclick="loadRankHistory('${r.keyword.replace(/'/g, "\\'")}')">
+            <td title="${r.keyword}">${r.keyword}</td>
+            <td class="num">${r.position !== null ? r.position : "not found"}</td>
+            <td class="num">${r.previous_position !== null ? r.previous_position : "—"}</td>
+            <td class="num" style="color:${r.change === null ? 'var(--muted)' : (r.change < 0 ? 'var(--accent2)' : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))}">
+              ${r.change === null ? "—" : (r.change < 0 ? "▲ " : (r.change > 0 ? "▼ " : "— ")) + Math.abs(r.change)}
+            </td>
+            <td class="num">${r.clicks}</td>
+            <td class="num">${r.impressions}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+async function loadRankTracker() {
+  const el = document.getElementById("rankTrackerTable");
+  try {
+    const d = await fetchJSON(`${API}/api/rank-tracker?site_url=${encodeURIComponent(currentSite())}${dateParams()}`);
+    el.innerHTML = renderRankTable(d.rows);
+  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+async function loadRankHistory(keyword) {
+  const card = document.getElementById("rankHistoryCard");
+  const title = document.getElementById("rankHistoryTitle");
+  const ctx = document.getElementById("rankHistoryChart");
+  card.style.display = "block";
+  title.textContent = `Position History — "${keyword}"`;
+  try {
+    const d = await fetchJSON(`${API}/api/rank-tracker/history?site_url=${encodeURIComponent(currentSite())}&keyword=${encodeURIComponent(keyword)}${dateParams()}`);
+    if (rankHistoryChart) rankHistoryChart.destroy();
+    rankHistoryChart = new Chart(ctx, {
+      type: "line",
+      data: {
+        labels: d.rows.map(r => r.date),
+        datasets: [{
+          label: "Position (lower = better)",
+          data: d.rows.map(r => r.position),
+          borderColor: "#4f8cff",
+          tension: 0.3,
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: { reverse: true, ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+        },
+        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+      }
+    });
+  } catch (e) {
+    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
+  }
+}
+
+let serperTrackedKeywords = [];
+
+function renderSerperKeywordChips() {
+  const el = document.getElementById("serperKeywordChips");
+  if (!serperTrackedKeywords.length) {
+    el.innerHTML = `<div class="loading">No keywords tracked yet — add one above</div>`;
+    return;
+  }
+  el.innerHTML = serperTrackedKeywords.map(kw => `
+    <span style="display:inline-flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:4px 10px; margin:0 6px 6px 0; font-size:12px;">
+      ${kw}
+      <span onclick="removeSerperKeyword('${kw.replace(/'/g, "\\'")}')" style="cursor:pointer; color:#ff6b6b;">×</span>
+    </span>`).join("");
+}
+
+async function loadSerperTrackedKeywords() {
+  try {
+    const d = await fetchJSON(`${API}/api/serper/tracked-keywords?site_url=${encodeURIComponent(currentSite())}`);
+    serperTrackedKeywords = d.keywords;
+  } catch (e) {
+    serperTrackedKeywords = [];
+  }
+  renderSerperKeywordChips();
+}
+
+async function saveSerperTrackedKeywords() {
+  renderSerperKeywordChips();
+  try {
+    await fetch(`${API}/api/serper/tracked-keywords`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site_url: currentSite(), keywords: serperTrackedKeywords }),
+    });
+  } catch (e) { /* resync next load */ }
+  loadSerperRankings();
+}
+
+function addSerperKeyword() {
+  const input = document.getElementById("newSerperKeywordInput");
+  const kw = input.value.trim();
+  input.value = "";
+  if (!kw) return;
+  if (serperTrackedKeywords.some(k => k.toLowerCase() === kw.toLowerCase())) return;
+  serperTrackedKeywords.push(kw);
+  saveSerperTrackedKeywords();
+}
+
+function removeSerperKeyword(kw) {
+  serperTrackedKeywords = serperTrackedKeywords.filter(k => k !== kw);
+  saveSerperTrackedKeywords();
+}
+
+function timeAgo(isoString) {
+  if (!isoString) return "never checked";
+  const then = new Date(isoString);
+  const mins = Math.floor((Date.now() - then.getTime()) / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function renderSerperTable(rows) {
+  if (!rows.length) return `<div class="loading">No keywords tracked yet — add some above</div>`;
+  return `
+    <table>
+      <thead><tr>
+        <th>Keyword</th><th class="num">Position</th><th>Matched URL</th><th>Last Checked</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td title="${r.keyword}">${r.keyword}</td>
+            <td class="num">${r.found === null ? "—" : (r.found ? r.position : "Not in top 100")}</td>
+            <td style="font-size:12px; color:var(--muted);" title="${r.url || ''}">${r.url ? r.url.slice(0, 40) : "—"}</td>
+            <td style="font-size:12px; color:var(--muted);">${timeAgo(r.checked_at)}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+async function loadSerperRankings() {
+  const el = document.getElementById("serperRankTable");
+  try {
+    const d = await fetchJSON(`${API}/api/serper/rankings?site_url=${encodeURIComponent(currentSite())}`);
+    el.innerHTML = renderSerperTable(d.rows);
+  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+}
+
+async function refreshSerperRankings() {
+  const btn = document.getElementById("serperRefreshBtn");
+  const el = document.getElementById("serperRankTable");
+  if (!serperTrackedKeywords.length) { alert("Add at least one keyword to check first"); return; }
+  btn.disabled = true;
+  btn.textContent = "Checking...";
+  el.innerHTML = `<div class="loading">Querying Serper for ${serperTrackedKeywords.length} keyword(s)...</div>`;
+  try {
+    const gl = document.getElementById("serperGl").value.trim() || "us";
+    const location = document.getElementById("serperLocation").value.trim() || null;
+    const res = await fetch(`${API}/api/serper/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site_url: currentSite(), gl, location }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || res.statusText);
+    }
+    const d = await res.json();
+    el.innerHTML = renderSerperTable(d.rows);
+  } catch (e) {
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Check Rankings Now";
+  }
+}
+
 function exportCsv(dataType) {
   const url = `${API}/api/export/csv?site_url=${encodeURIComponent(currentSite())}&data_type=${dataType}${dateParams()}`;
   window.open(url, "_blank");
@@ -668,10 +960,113 @@ async function loadAll() {
   loadDevices();
   loadMovers();
   loadSitemaps();
+  loadTrackedKeywords();
+  loadRankTracker();
+  loadSerperTrackedKeywords();
+  loadSerperRankings();
   loadGa4Summary();
   loadGa4Trend();
   loadGa4Traffic();
   loadGa4Pages();
+}
+
+// ---------------- Client Access panel (admin: manage client logins + report links) ----------------
+
+function toggleClientAccessPanel() {
+  const panel = document.getElementById("clientAccessPanel");
+  const showing = panel.style.display !== "none";
+  panel.style.display = showing ? "none" : "block";
+  if (!showing) loadClientList();
+}
+
+async function saveClientAccess() {
+  const statusEl = document.getElementById("caStatus");
+  const body = {
+    client_id: document.getElementById("caClientId").value.trim(),
+    site_url: document.getElementById("caSiteUrl").value.trim(),
+    password: document.getElementById("caPassword").value || undefined,
+    name: document.getElementById("caName").value.trim() || undefined,
+    ga4_property_id: document.getElementById("caGa4PropertyId").value.trim() || undefined,
+  };
+  if (!body.client_id || !body.site_url) {
+    statusEl.textContent = "Client ID and Site URL are required.";
+    return;
+  }
+  statusEl.textContent = "Saving...";
+  try {
+    const res = await fetch(`${API}/api/admin/clients`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to save");
+    statusEl.textContent = `Saved — ${data.client_id} → ${data.site_url}`;
+    document.getElementById("caPassword").value = "";
+    loadClientList();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  }
+}
+
+async function saveReportLink() {
+  const statusEl = document.getElementById("rlStatus");
+  const site_url = document.getElementById("rlSiteUrl").value.trim();
+  const drive_link = document.getElementById("rlDriveLink").value.trim();
+  if (!site_url || !drive_link) {
+    statusEl.textContent = "Site URL and Drive link are required.";
+    return;
+  }
+  statusEl.textContent = "Saving...";
+  try {
+    const res = await fetch(`${API}/api/admin/report-link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site_url, drive_link }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to save");
+    statusEl.textContent = "Report link saved.";
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  }
+}
+
+async function deleteClientAccess(clientId) {
+  if (!confirm(`Remove login for "${clientId}"?`)) return;
+  try {
+    await fetch(`${API}/api/admin/clients/${encodeURIComponent(clientId)}`, { method: "DELETE" });
+    loadClientList();
+  } catch (e) {
+    alert("Could not delete: " + e.message);
+  }
+}
+
+async function loadClientList() {
+  const el = document.getElementById("clientListTable");
+  try {
+    const data = await fetch(`${API}/api/admin/clients`).then(r => r.json());
+    if (!data.clients.length) {
+      el.innerHTML = `<div class="loading">No client logins yet.</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <table>
+        <thead><tr><th>Client ID</th><th>Site URL</th><th>Name</th><th>GA4 Property</th><th></th></tr></thead>
+        <tbody>
+          ${data.clients.map(c => `
+            <tr>
+              <td>${c.client_id}</td>
+              <td>${c.site_url}</td>
+              <td>${c.name || "—"}</td>
+              <td>${c.ga4_property_id || "—"}</td>
+              <td><a href="#" onclick="deleteClientAccess('${c.client_id}'); return false;" style="color:#ff6b6b;">Remove</a></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+  }
 }
 
 (async function init() {

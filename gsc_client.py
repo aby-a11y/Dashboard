@@ -253,6 +253,101 @@ def get_movers(site_url, start_date=None, end_date=None, limit=10, min_impressio
     return {"gainers": gainers, "losers": losers}
 
 
+TRACKED_KEYWORDS_FILE = "tracked_keywords.json"
+
+
+def _load_tracked_keywords():
+    import json
+    if not os.path.exists(TRACKED_KEYWORDS_FILE):
+        return {}
+    with open(TRACKED_KEYWORDS_FILE, "r") as f:
+        return json.load(f)
+
+
+def _save_tracked_keywords(data):
+    import json
+    with open(TRACKED_KEYWORDS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def get_tracked_keywords(site_url):
+    return _load_tracked_keywords().get(site_url, [])
+
+
+def set_tracked_keywords(site_url, keywords):
+    """Overwrite the tracked-keyword list for a site. Dedupes (case-insensitive),
+    strips whitespace, drops empties, preserves the order given."""
+    data = _load_tracked_keywords()
+    cleaned, seen = [], set()
+    for kw in keywords:
+        kw = (kw or "").strip()
+        if kw and kw.lower() not in seen:
+            cleaned.append(kw)
+            seen.add(kw.lower())
+    data[site_url] = cleaned
+    _save_tracked_keywords(data)
+    return cleaned
+
+
+def get_keyword_position_history(site_url, keyword, start_date=None, end_date=None):
+    """Daily average position (+ clicks/impressions) for one exact-match keyword.
+    Powers the per-keyword trend chart in the Rank Tracker UI."""
+    if not start_date or not end_date:
+        start_date, end_date = default_date_range()
+    rows = query_search_analytics(
+        site_url, dimensions=["date"], start_date=start_date, end_date=end_date,
+        row_limit=1000,
+        filters=[{"dimension": "query", "operator": "equals", "expression": keyword}],
+    )
+    rows.sort(key=lambda r: r["keys"][0])
+    return [
+        {
+            "date": r["keys"][0],
+            "position": round(r.get("position", 0), 1),
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+        }
+        for r in rows
+    ]
+
+
+def get_rank_tracker_summary(site_url, keywords, start_date=None, end_date=None):
+    """Current vs. previous-period position for a list of exact-match tracked
+    keywords — the classic rank-tracker table (keyword / position / change).
+    A keyword with zero impressions in a period comes back as position=None
+    ('not found' in the UI), matching how GSC actually behaves."""
+    if not start_date or not end_date:
+        start_date, end_date = default_date_range()
+    prev_start, prev_end = _previous_period(start_date, end_date)
+
+    results = []
+    for kw in keywords:
+        curr_rows = query_search_analytics(
+            site_url, dimensions=["query"], start_date=start_date, end_date=end_date,
+            row_limit=1, filters=[{"dimension": "query", "operator": "equals", "expression": kw}],
+        )
+        prev_rows = query_search_analytics(
+            site_url, dimensions=["query"], start_date=prev_start, end_date=prev_end,
+            row_limit=1, filters=[{"dimension": "query", "operator": "equals", "expression": kw}],
+        )
+        curr = curr_rows[0] if curr_rows else None
+        prev = prev_rows[0] if prev_rows else None
+
+        curr_pos = round(curr.get("position", 0), 1) if curr else None
+        prev_pos = round(prev.get("position", 0), 1) if prev else None
+
+        results.append({
+            "keyword": kw,
+            "position": curr_pos,
+            "previous_position": prev_pos,
+            # negative = improved (rank moved to a lower/better number) — same convention as get_movers
+            "change": round(curr_pos - prev_pos, 1) if (curr_pos is not None and prev_pos is not None) else None,
+            "clicks": curr.get("clicks", 0) if curr else 0,
+            "impressions": curr.get("impressions", 0) if curr else 0,
+        })
+    return results
+
+
 def get_sitemaps(site_url):
     service = get_service()
     result = service.sitemaps().list(siteUrl=site_url).execute()
