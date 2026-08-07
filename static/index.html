@@ -218,14 +218,7 @@
   </div>
 
   <div class="chart-card">
-    <div class="section-title">🎯 Rank Tracker <span style="color:var(--muted); font-weight:400;">(tracked keywords, GSC position)</span></div>
-    <div style="display:flex; gap:8px; margin-bottom:12px;">
-      <input type="text" id="newKeywordInput" placeholder="Add a keyword to track..." style="flex:1;" onkeydown="if(event.key==='Enter') addKeyword()">
-      <button onclick="addKeyword()">Add</button>
-    </div>
-    <div id="keywordChips" style="margin-bottom:14px;"></div>
-    <div id="rankTrackerTable" class="loading">Loading...</div>
-  </div>
+    
 
   <div class="chart-card" id="rankHistoryCard" style="display:none;">
     <div class="section-title" id="rankHistoryTitle">Position History</div>
@@ -241,7 +234,6 @@
       <input type="text" id="serperLocation" placeholder="Location (optional, e.g. Mumbai, Maharashtra, India)" style="width:260px;">
       <button onclick="refreshSerperRankings()" id="serperRefreshBtn" style="background:var(--accent2);">Check Rankings Now</button>
     </div>
-    <div id="serperKeywordChips" style="margin-bottom:14px;"></div>
     <div id="serperRankTable" class="loading">Loading...</div>
   </div>
 </main>
