@@ -29,6 +29,7 @@ import jwt  # PyJWT — add to requirements.txt
 
 CLIENTS_FILE = "clients.json"            # {client_id: {password_hash, salt, site_url, name, ga4_property_id}}
 REPORT_LINKS_FILE = "report_links.json"  # {site_url: drive_link}
+REPORT_EMAILS_FILE = "report_emails.json"  # {site_url: owner_email} — used by the email workflow feature
 JWT_SECRET_FILE = "jwt_secret.txt"
 JWT_ALGO = "HS256"
 TOKEN_TTL_HOURS = 24 * 7  # 7 days — client stays logged in for a week
@@ -169,3 +170,16 @@ def set_report_link(site_url, drive_link):
 
 def get_report_link(site_url):
     return _load_json(REPORT_LINKS_FILE).get(site_url)
+
+
+# ---------------- admin: per-site owner email (for the email workflow feature) ----------------
+
+def set_report_email(site_url, email):
+    emails = _load_json(REPORT_EMAILS_FILE)
+    emails[site_url] = email
+    _save_json(REPORT_EMAILS_FILE, emails)
+    return email
+
+
+def get_report_email(site_url):
+    return _load_json(REPORT_EMAILS_FILE).get(site_url)

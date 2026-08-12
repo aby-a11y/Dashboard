@@ -89,6 +89,79 @@
   .error { color: #ff6b6b; }
   tr:hover { background: rgba(255,255,255,0.02); }
   .donut-wrap { position: relative; height: 220px; }
+  .workflow-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 60px 20px; z-index: 1000; overflow-y: auto;
+  }
+  .workflow-modal {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 22px 24px; width: 100%; max-width: 480px;
+  }
+  .wf-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; gap: 10px;
+  }
+  .wf-row:last-child { border-bottom: none; }
+  .wf-badge {
+    font-size: 11px; padding: 3px 8px; border-radius: 20px; text-transform: uppercase;
+    letter-spacing: 0.03em; white-space: nowrap;
+  }
+  .wf-badge.scheduled { background: rgba(79,140,255,0.15); color: #4f8cff; }
+  .wf-badge.sent { background: rgba(51,193,122,0.15); color: #33c17a; }
+  .wf-badge.done { background: rgba(144,153,166,0.15); color: #9099a6; }
+  .wf-badge.cancelled { background: rgba(144,153,166,0.15); color: #9099a6; }
+  .wf-badge.error { background: rgba(224,93,93,0.15); color: #e05d5d; }
+
+  /* More menu (3-dot) */
+  .more-menu-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    letter-spacing: 2px;
+  }
+  .more-menu-btn:hover { opacity: 1; border-color: var(--accent); }
+  .more-menu-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0);
+    z-index: 1200; visibility: hidden; transition: background 0.25s ease;
+  }
+  .more-menu-overlay.open { background: rgba(0,0,0,0.5); visibility: visible; }
+  .more-menu-drawer {
+    position: fixed; top: 0; right: 0; height: 100vh; width: 280px; max-width: 82vw;
+    background: var(--card); border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(0,0,0,0.35);
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+    display: flex; flex-direction: column; padding: 18px 16px;
+  }
+  .more-menu-overlay.open .more-menu-drawer { transform: translateX(0); }
+  .more-menu-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  }
+  .more-menu-header span { font-size: 14px; font-weight: 600; }
+  .more-menu-close {
+    background: transparent; padding: 4px 8px; font-size: 16px; color: var(--muted);
+  }
+  .more-menu-item {
+    display: flex; align-items: center; gap: 12px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); text-align: left; width: 100%;
+    padding: 12px 14px; border-radius: 10px; font-size: 14px;
+    margin-bottom: 10px; cursor: pointer;
+  }
+  .more-menu-item:hover { border-color: var(--accent); background: rgba(79,140,255,0.08); opacity: 1; }
+  .more-menu-item .mm-icon { font-size: 17px; }
+  .more-menu-item .mm-sub { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 400; }
+  .more-menu-item .mm-label { font-weight: 600; }
 </style>
 </head>
 <body>
@@ -110,15 +183,73 @@
     <input type="date" id="endDate" style="display:none">
     <input type="text" id="ga4PropertyId" placeholder="GA4 Property ID" style="width:150px;">
     <button onclick="loadAll()">Refresh</button>
-    <button onclick="window.location.href='/Client'">
-    Client Mode
-</button>
 <button id="downloadPdfBtn" onclick="generatePdf()">
     Generate PDF Report
 </button>
-<button onclick="toggleClientAccessPanel()">👤 Client Access</button>
+<button class="more-menu-btn" onclick="toggleMoreMenu()" title="More" aria-label="More options">⋮</button>
   </div>
 </header>
+
+<div id="moreMenuOverlay" class="more-menu-overlay" onclick="if(event.target===this) closeMoreMenu()">
+  <div class="more-menu-drawer">
+    <div class="more-menu-header">
+      <span>More options</span>
+      <button class="more-menu-close" onclick="closeMoreMenu()">✕</button>
+    </div>
+    <button class="more-menu-item" onclick="closeMoreMenu(); window.location.href='/Client';">
+      <span class="mm-icon">🖥️</span>
+      <span><span class="mm-label">Client Mode</span><span class="mm-sub">Open client-facing view</span></span>
+    </button>
+    <button class="more-menu-item" onclick="closeMoreMenu(); toggleClientAccessPanel();">
+      <span class="mm-icon">👤</span>
+      <span><span class="mm-label">Client Access</span><span class="mm-sub">Manage logins &amp; report links</span></span>
+    </button>
+    <button class="more-menu-item" onclick="closeMoreMenu(); openWorkflowModal();">
+      <span class="mm-icon">⏱️</span>
+      <span><span class="mm-label">Email Workflow</span><span class="mm-sub">Schedule report &amp; reminders</span></span>
+    </button>
+  </div>
+</div>
+
+<div id="workflowOverlay" class="workflow-overlay" style="display:none;" onclick="if(event.target===this) closeWorkflowModal()">
+  <div class="workflow-modal">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <div class="section-title" style="margin:0;">Email Workflow — <span id="wfSiteLabel" style="color:var(--accent);"></span></div>
+      <button onclick="closeWorkflowModal()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
+      <input type="email" id="wfEmail" placeholder="Client owner's email address">
+
+      <div style="display:flex; gap:16px; font-size:13px; color:var(--text);">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="wfReportType" value="dashboard_pdf" checked onchange="onWfReportTypeChange()"> Dashboard PDF
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="wfReportType" value="external_link" onchange="onWfReportTypeChange()"> External Report Link
+        </label>
+      </div>
+
+      <input type="text" id="wfDriveLink" placeholder="Report link (e.g. Google Drive URL)" style="display:none;">
+
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Send at</label>
+        <input type="datetime-local" id="wfScheduledTime" style="width:100%;">
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button onclick="startWorkflow()">Start Workflow</button>
+        <span id="wfStatus" style="color:var(--muted); font-size:13px;"></span>
+      </div>
+      <div style="color:var(--muted); font-size:12px;">
+        Sends the report at the scheduled time, then automatically reminds 3 more times, 24 hours apart, then stops.
+      </div>
+    </div>
+
+    <div class="section-title" style="font-size:13px;">Workflows for this site</div>
+    <div id="wfList" class="loading">Loading...</div>
+  </div>
+</div>
 
 <div id="clientAccessPanel" style="display:none; margin: 0 28px 24px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 20px; max-width:1300px; margin-left:auto; margin-right:auto;">
   <div class="section-title">Client Access — logins &amp; report links</div>
@@ -203,7 +334,7 @@
 
   <div class="grid-2">
     <div class="chart-card">
-      <div class="section-title">Devices</div>
+      <div class="section-title">Devices(Clicks)</div>
       <div class="donut-wrap"><canvas id="deviceChart"></canvas></div>
     </div>
     <div class="chart-card">
@@ -212,10 +343,6 @@
     </div>
   </div>
 
-  <div class="chart-card">
-    <div class="section-title">🗺️ Sitemap Status</div>
-    <div id="sitemapsTable" class="loading">Loading...</div>
-  </div>
 
   <div class="chart-card">
     
@@ -226,7 +353,7 @@
   </div>
 
   <div class="chart-card">
-    <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position via Serper)</span></div>
+    <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span></div>
     <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
       <input type="text" id="newSerperKeywordInput" placeholder="Add a keyword to track..." style="flex:1; min-width:180px;" onkeydown="if(event.key==='Enter') addSerperKeyword()">
       <button onclick="addSerperKeyword()">Add</button>
@@ -447,11 +574,73 @@ async function loadPages() {
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
+/* GSC returns ISO 3166-1 alpha-3 country codes (e.g. "ind", "usa").
+   This maps them to readable names for display only — the underlying
+   data/API is untouched. */
+const COUNTRY_NAMES = {
+  afg: "Afghanistan", alb: "Albania", dza: "Algeria", asm: "American Samoa", and: "Andorra",
+  ago: "Angola", aia: "Anguilla", ata: "Antarctica", atg: "Antigua and Barbuda", arg: "Argentina",
+  arm: "Armenia", abw: "Aruba", aus: "Australia", aut: "Austria", aze: "Azerbaijan",
+  bhs: "Bahamas", bhr: "Bahrain", bgd: "Bangladesh", brb: "Barbados", blr: "Belarus",
+  bel: "Belgium", blz: "Belize", ben: "Benin", bmu: "Bermuda", btn: "Bhutan",
+  bol: "Bolivia", bes: "Bonaire, Sint Eustatius and Saba", bih: "Bosnia and Herzegovina", bwa: "Botswana", bra: "Brazil",
+  iot: "British Indian Ocean Territory", brn: "Brunei", bgr: "Bulgaria", bfa: "Burkina Faso", bdi: "Burundi",
+  cpv: "Cabo Verde", khm: "Cambodia", cmr: "Cameroon", can: "Canada", cym: "Cayman Islands",
+  caf: "Central African Republic", tcd: "Chad", chl: "Chile", chn: "China", cxr: "Christmas Island",
+  cck: "Cocos Islands", col: "Colombia", com: "Comoros", cog: "Congo", cod: "DR Congo",
+  cok: "Cook Islands", cri: "Costa Rica", civ: "Côte d'Ivoire", hrv: "Croatia", cub: "Cuba",
+  cuw: "Curaçao", cyp: "Cyprus", cze: "Czechia", dnk: "Denmark", dji: "Djibouti",
+  dma: "Dominica", dom: "Dominican Republic", ecu: "Ecuador", egy: "Egypt", slv: "El Salvador",
+  gnq: "Equatorial Guinea", eri: "Eritrea", est: "Estonia", swz: "Eswatini", eth: "Ethiopia",
+  flk: "Falkland Islands", fro: "Faroe Islands", fji: "Fiji", fin: "Finland", fra: "France",
+  guf: "French Guiana", pyf: "French Polynesia", gab: "Gabon", gmb: "Gambia", geo: "Georgia",
+  deu: "Germany", gha: "Ghana", gib: "Gibraltar", grc: "Greece", grl: "Greenland",
+  grd: "Grenada", glp: "Guadeloupe", gum: "Guam", gtm: "Guatemala", ggy: "Guernsey",
+  gin: "Guinea", gnb: "Guinea-Bissau", guy: "Guyana", hti: "Haiti", hnd: "Honduras",
+  hkg: "Hong Kong", hun: "Hungary", isl: "Iceland", ind: "India", idn: "Indonesia",
+  irn: "Iran", irq: "Iraq", irl: "Ireland", imn: "Isle of Man", isr: "Israel",
+  ita: "Italy", jam: "Jamaica", jpn: "Japan", jey: "Jersey", jor: "Jordan",
+  kaz: "Kazakhstan", ken: "Kenya", kir: "Kiribati", prk: "North Korea", kor: "South Korea",
+  kwt: "Kuwait", kgz: "Kyrgyzstan", lao: "Laos", lva: "Latvia", lbn: "Lebanon",
+  lso: "Lesotho", lbr: "Liberia", lby: "Libya", lie: "Liechtenstein", ltu: "Lithuania",
+  lux: "Luxembourg", mac: "Macao", mdg: "Madagascar", mwi: "Malawi", mys: "Malaysia",
+  mdv: "Maldives", mli: "Mali", mlt: "Malta", mhl: "Marshall Islands", mtq: "Martinique",
+  mrt: "Mauritania", mus: "Mauritius", myt: "Mayotte", mex: "Mexico", fsm: "Micronesia",
+  mda: "Moldova", mco: "Monaco", mng: "Mongolia", mne: "Montenegro", msr: "Montserrat",
+  mar: "Morocco", moz: "Mozambique", mmr: "Myanmar", nam: "Namibia", nru: "Nauru",
+  npl: "Nepal", nld: "Netherlands", ncl: "New Caledonia", nzl: "New Zealand", nic: "Nicaragua",
+  ner: "Niger", nga: "Nigeria", niu: "Niue", nfk: "Norfolk Island", mkd: "North Macedonia",
+  mnp: "Northern Mariana Islands", nor: "Norway", omn: "Oman", pak: "Pakistan", plw: "Palau",
+  pse: "Palestine", pan: "Panama", png: "Papua New Guinea", pry: "Paraguay", per: "Peru",
+  phl: "Philippines", pcn: "Pitcairn Islands", pol: "Poland", prt: "Portugal", pri: "Puerto Rico",
+  qat: "Qatar", reu: "Réunion", rou: "Romania", rus: "Russia", rwa: "Rwanda",
+  blm: "Saint Barthélemy", shn: "Saint Helena", kna: "Saint Kitts and Nevis", lca: "Saint Lucia", maf: "Saint Martin",
+  spm: "Saint Pierre and Miquelon", vct: "Saint Vincent and the Grenadines", wsm: "Samoa", smr: "San Marino", stp: "São Tomé and Príncipe",
+  sau: "Saudi Arabia", sen: "Senegal", srb: "Serbia", syc: "Seychelles", sle: "Sierra Leone",
+  sgp: "Singapore", sxm: "Sint Maarten", svk: "Slovakia", svn: "Slovenia", slb: "Solomon Islands",
+  som: "Somalia", zaf: "South Africa", ssd: "South Sudan", esp: "Spain", lka: "Sri Lanka",
+  sdn: "Sudan", sur: "Suriname", swe: "Sweden", che: "Switzerland", syr: "Syria",
+  twn: "Taiwan", tjk: "Tajikistan", tza: "Tanzania", tha: "Thailand", tls: "Timor-Leste",
+  tgo: "Togo", tkl: "Tokelau", ton: "Tonga", tto: "Trinidad and Tobago", tun: "Tunisia",
+  tur: "Turkey", tkm: "Turkmenistan", tca: "Turks and Caicos Islands", tuv: "Tuvalu", uga: "Uganda",
+  ukr: "Ukraine", are: "United Arab Emirates", gbr: "United Kingdom", usa: "United States", umi: "U.S. Minor Outlying Islands",
+  ury: "Uruguay", uzb: "Uzbekistan", vut: "Vanuatu", vat: "Vatican City", ven: "Venezuela",
+  vnm: "Vietnam", vgb: "British Virgin Islands", vir: "U.S. Virgin Islands", wlf: "Wallis and Futuna", esh: "Western Sahara",
+  yem: "Yemen", zmb: "Zambia", zwe: "Zimbabwe", zzz: "Unknown Region"
+};
+
+function countryDisplayName(code) {
+  if (!code) return code;
+  const key = String(code).trim().toLowerCase();
+  return COUNTRY_NAMES[key] || String(code).toUpperCase();
+}
+
 async function loadCountries() {
   const el = document.getElementById("countriesTable");
   try {
     const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
-    el.innerHTML = renderTable(d.rows, "country", "Country");
+    const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
+    el.innerHTML = renderTable(rows, "country", "Country");
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
@@ -964,6 +1153,22 @@ async function loadAll() {
 
 // ---------------- Client Access panel (admin: manage client logins + report links) ----------------
 
+function toggleMoreMenu() {
+  const overlay = document.getElementById('moreMenuOverlay');
+  overlay.classList.contains('open') ? closeMoreMenu() : openMoreMenu();
+}
+function openMoreMenu() {
+  document.getElementById('moreMenuOverlay').classList.add('open');
+  document.addEventListener('keydown', moreMenuEscHandler);
+}
+function closeMoreMenu() {
+  document.getElementById('moreMenuOverlay').classList.remove('open');
+  document.removeEventListener('keydown', moreMenuEscHandler);
+}
+function moreMenuEscHandler(e) {
+  if (e.key === 'Escape') closeMoreMenu();
+}
+
 function toggleClientAccessPanel() {
   const panel = document.getElementById("clientAccessPanel");
   const showing = panel.style.display !== "none";
@@ -1058,6 +1263,135 @@ async function loadClientList() {
       </table>`;
   } catch (e) {
     el.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+// ---------------- Email Workflow (send report + 3x 24h-spaced reminders) ----------------
+
+function currentSiteUrl() {
+  return document.getElementById("siteSelect").value;
+}
+
+async function openWorkflowModal() {
+  const site = currentSiteUrl();
+  if (!site) { alert("Select a site first."); return; }
+
+  document.getElementById("wfSiteLabel").textContent = site;
+  document.getElementById("wfStatus").textContent = "";
+  document.getElementById("wfDriveLink").value = "";
+  document.querySelector('input[name="wfReportType"][value="dashboard_pdf"]').checked = true;
+  onWfReportTypeChange();
+
+  // default schedule time = now, rounded to next 5 minutes
+  const now = new Date(Date.now() + 5 * 60000);
+  now.setSeconds(0, 0);
+  document.getElementById("wfScheduledTime").value = now.toISOString().slice(0, 16);
+
+  document.getElementById("workflowOverlay").style.display = "flex";
+
+  // prefill the owner email if one was saved for this site before
+  try {
+    const data = await fetch(`${API}/api/admin/report-email?site_url=${encodeURIComponent(site)}`).then(r => r.json());
+    document.getElementById("wfEmail").value = data.email || "";
+  } catch (e) { /* non-fatal — just leave the field empty */ }
+
+  // prefill an existing drive link if one is saved (used if they switch to External Report Link)
+  try {
+    const data = await fetch(`${API}/api/admin/report-link?site_url=${encodeURIComponent(site)}`).then(r => r.json());
+    if (data.drive_link) document.getElementById("wfDriveLink").value = data.drive_link;
+  } catch (e) { /* non-fatal */ }
+
+  loadWorkflowsForSite(site);
+}
+
+function closeWorkflowModal() {
+  document.getElementById("workflowOverlay").style.display = "none";
+}
+
+function onWfReportTypeChange() {
+  const type = document.querySelector('input[name="wfReportType"]:checked').value;
+  document.getElementById("wfDriveLink").style.display = type === "external_link" ? "block" : "none";
+}
+
+async function startWorkflow() {
+  const statusEl = document.getElementById("wfStatus");
+  const site_url = currentSiteUrl();
+  const email = document.getElementById("wfEmail").value.trim();
+  const report_type = document.querySelector('input[name="wfReportType"]:checked').value;
+  const drive_link = document.getElementById("wfDriveLink").value.trim();
+  const scheduled_time = document.getElementById("wfScheduledTime").value;
+  const ga4_property_id = document.getElementById("ga4PropertyId").value.trim() || undefined;
+
+  if (!email) { statusEl.textContent = "Enter the client's email address."; return; }
+  if (!scheduled_time) { statusEl.textContent = "Pick a send time."; return; }
+  if (report_type === "external_link" && !drive_link) {
+    statusEl.textContent = "Enter the report link."; return;
+  }
+
+  statusEl.textContent = "Starting...";
+  try {
+    const res = await fetch(`${API}/api/admin/workflow/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        site_url, email, report_type, scheduled_time,
+        ga4_property_id, drive_link: report_type === "external_link" ? drive_link : undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to start workflow");
+    statusEl.textContent = "Workflow scheduled ✓";
+    loadWorkflowsForSite(site_url);
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  }
+}
+
+function wfFormatTime(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString();
+}
+
+async function loadWorkflowsForSite(site_url) {
+  const el = document.getElementById("wfList");
+  el.className = "loading";
+  el.textContent = "Loading...";
+  try {
+    const data = await fetch(`${API}/api/admin/workflow/list?site_url=${encodeURIComponent(site_url)}`).then(r => r.json());
+    if (!data.workflows.length) {
+      el.innerHTML = `<div class="loading">No workflows yet for this site.</div>`;
+      return;
+    }
+    el.innerHTML = data.workflows.slice().reverse().map(w => `
+      <div class="wf-row">
+        <div>
+          <div>${w.email} &nbsp;·&nbsp; ${w.report_type === "dashboard_pdf" ? "Dashboard PDF" : "External Link"}</div>
+          <div style="color:var(--muted); font-size:12px;">
+            ${w.status === "done" ? `Finished — sent ${w.reminder_count} reminder(s)` :
+              w.status === "cancelled" ? "Cancelled" :
+              w.status === "error" ? "Failed to send — check Gmail credentials" :
+              w.next_run_at ? `Next send: ${wfFormatTime(w.next_run_at)}` : `Scheduled: ${wfFormatTime(w.scheduled_time)}`}
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="wf-badge ${w.status}">${w.status}</span>
+          ${(w.status === "scheduled" || w.status === "sent") ?
+            `<a href="#" onclick="cancelWorkflow('${w.workflow_id}'); return false;" style="color:#ff6b6b; font-size:12px;">Cancel</a>` : ""}
+        </div>
+      </div>
+    `).join("");
+  } catch (e) { 
+    el.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function cancelWorkflow(workflow_id) {
+  if (!confirm("Cancel this workflow? No further reminders will be sent.")) return;
+  try {
+    await fetch(`${API}/api/admin/workflow/${workflow_id}`, { method: "DELETE" });
+    loadWorkflowsForSite(currentSiteUrl());
+  } catch (e) {
+    alert("Error: " + e.message);
   }
 }
 

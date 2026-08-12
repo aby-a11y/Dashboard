@@ -22,6 +22,8 @@ import gsc_client
 import ga4_client
 import serper_client
 import client_auth
+import workflow_store
+import scheduler as email_scheduler
 from pdf_report import generate_pdf
 from fastapi.responses import StreamingResponse
 
@@ -33,6 +35,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _start_email_scheduler():
+    """Starts the persisted APScheduler instance so pending workflow
+    sends/reminders (from before a restart) pick back up automatically."""
+    email_scheduler.start()
 
 
 def _dates(start_date: Optional[str], end_date: Optional[str]):
@@ -322,6 +331,78 @@ def api_admin_set_report_link(body: ReportLinkBody):
 @app.get("/api/admin/report-link")
 def api_admin_get_report_link(site_url: str):
     return {"site_url": site_url, "drive_link": client_auth.get_report_link(site_url)}
+
+
+class ReportEmailBody(BaseModel):
+    site_url: str
+    email: str
+
+
+@app.post("/api/admin/report-email")
+def api_admin_set_report_email(body: ReportEmailBody):
+    """Save the client's owner email once per site — the workflow re-uses
+    it every time so you don't have to re-type it for each new report."""
+    client_auth.set_report_email(body.site_url, body.email)
+    return {"site_url": body.site_url, "email": body.email}
+
+
+@app.get("/api/admin/report-email")
+def api_admin_get_report_email(site_url: str):
+    return {"site_url": site_url, "email": client_auth.get_report_email(site_url)}
+
+
+# ---------------- Email report workflow: send + 24h-spaced reminders (x3) ----------------
+
+class WorkflowCreateBody(BaseModel):
+    site_url: str
+    email: str
+    report_type: str  # "dashboard_pdf" or "external_link"
+    scheduled_time: str  # ISO datetime, e.g. "2026-08-10T09:00:00"
+    ga4_property_id: Optional[str] = None
+    drive_link: Optional[str] = None
+
+
+@app.post("/api/admin/workflow/create")
+def api_create_workflow(body: WorkflowCreateBody):
+    if body.report_type not in ("dashboard_pdf", "external_link"):
+        raise HTTPException(status_code=400, detail="report_type must be 'dashboard_pdf' or 'external_link'")
+    if body.report_type == "external_link" and not body.drive_link:
+        raise HTTPException(status_code=400, detail="drive_link is required when report_type is external_link")
+    if not email_scheduler.email_client.is_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="GMAIL_USER / GMAIL_APP_PASSWORD not set in .env — see email_client.py",
+        )
+    try:
+        run_date = datetime.datetime.fromisoformat(body.scheduled_time)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="scheduled_time must be an ISO datetime, e.g. 2026-08-10T09:00:00")
+
+    # remember the owner email against this site for next time, same as report links
+    client_auth.set_report_email(body.site_url, body.email)
+
+    wf = workflow_store.create_workflow(
+        site_url=body.site_url, email=body.email, report_type=body.report_type,
+        scheduled_time=body.scheduled_time, ga4_property_id=body.ga4_property_id,
+        drive_link=body.drive_link,
+    )
+    email_scheduler.schedule_workflow(wf["workflow_id"], run_date)
+    return wf
+
+
+@app.get("/api/admin/workflow/list")
+def api_list_workflows(site_url: Optional[str] = None):
+    return {"workflows": workflow_store.list_workflows(site_url)}
+
+
+@app.delete("/api/admin/workflow/{workflow_id}")
+def api_cancel_workflow(workflow_id: str):
+    wf = workflow_store.get_workflow(workflow_id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="No such workflow_id")
+    email_scheduler.cancel_workflow_jobs(workflow_id)
+    workflow_store.update_workflow(workflow_id, status="cancelled", next_run_at=None)
+    return {"status": "cancelled", "workflow_id": workflow_id}
 
 
 @app.get("/client-login")

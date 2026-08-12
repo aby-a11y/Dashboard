@@ -12,3 +12,6 @@ clients id password dashboard.txt
 clients.json
 report_links.json
 jwt_secret.txt
+report_emails.json
+email_workflows.json
+jobs.sqlite
