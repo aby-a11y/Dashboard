@@ -111,7 +111,7 @@
 <button id="downloadPdfBtn" onclick="generatePdf()">
     Generate PDF Report
 </button>
-    <button id="moreInfoBtn" style="background:var(--accent2); display:none;" onclick="openMoreInfo()">📁 Get More Info</button>
+    <button id="moreInfoBtn" style="background:var(--accent2); display:none;" onclick="openMoreInfo()">📁 Get Full Report</button>
     <button style="background:transparent; border:1px solid var(--border); color:var(--muted);" onclick="logout()">Log Out</button>
   </div>
 </header>
@@ -131,6 +131,11 @@
       <div class="section-title">Traffic Sources</div>
       <div class="donut-wrap"><canvas id="ga4TrafficChart"></canvas></div>
     </div>
+  </div>
+  
+  <div class="chart-card">
+    <div class="section-title">Top Pages (GA4)</div>
+    <div id="ga4PagesTable" class="loading">Loading...</div>
   </div>
 
 
@@ -159,7 +164,7 @@
 
   <div class="grid-2">
     <div class="chart-card">
-      <div class="section-title">Devices(Clicks)</div>
+      <div class="section-title">Devices (Clicks)</div>
       <div class="donut-wrap"><canvas id="deviceChart"></canvas></div>
     </div>
     <div class="chart-card">
@@ -482,7 +487,26 @@ async function loadCountries() {
   try {
     const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
     const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
-    el.innerHTML = renderTable(rows, "country", "Country");
+    el.innerHTML = `
+  <table>
+    <thead>
+      <tr>
+        <th>Country</th>
+        <th class="num">Clicks</th>
+        <th class="num">Impr.</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(r => `
+        <tr>
+          <td title="${r.country}">${String(r.country).slice(0, 45)}</td>
+          <td class="num">${r.clicks}</td>
+          <td class="num">${r.impressions}</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>
+`;
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
