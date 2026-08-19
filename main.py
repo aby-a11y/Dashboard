@@ -356,18 +356,20 @@ def api_admin_get_report_email(site_url: str):
 class WorkflowCreateBody(BaseModel):
     site_url: str
     email: str
-    report_type: str  # "dashboard_pdf" or "external_link"
     scheduled_time: str  # ISO datetime, e.g. "2026-08-10T09:00:00"
     ga4_property_id: Optional[str] = None
-    drive_link: Optional[str] = None
+    drive_link: Optional[str] = None       # the client-facing report link included in the email
+    custom_message: Optional[str] = None   # optional — replaces the default email intro text
+    login_id: Optional[str] = None         # optional — included in the email as "Login ID"
+    login_password: Optional[str] = None   # optional — included in the email as "Password"
+    recurrence: str = "once"               # "once" | "monthly"
+    send_reminders: bool = True            # 3x/24h-apart reminders after each send
 
 
 @app.post("/api/admin/workflow/create")
 def api_create_workflow(body: WorkflowCreateBody):
-    if body.report_type not in ("dashboard_pdf", "external_link"):
-        raise HTTPException(status_code=400, detail="report_type must be 'dashboard_pdf' or 'external_link'")
-    if body.report_type == "external_link" and not body.drive_link:
-        raise HTTPException(status_code=400, detail="drive_link is required when report_type is external_link")
+    if body.recurrence not in ("once", "monthly"):
+        raise HTTPException(status_code=400, detail="recurrence must be 'once' or 'monthly'")
     if not email_scheduler.email_client.is_configured():
         raise HTTPException(
             status_code=400,
@@ -378,16 +380,99 @@ def api_create_workflow(body: WorkflowCreateBody):
     except ValueError:
         raise HTTPException(status_code=400, detail="scheduled_time must be an ISO datetime, e.g. 2026-08-10T09:00:00")
 
-    # remember the owner email against this site for next time, same as report links
+    # remember the owner email + report link against this site for next time
     client_auth.set_report_email(body.site_url, body.email)
+    if body.drive_link:
+        client_auth.set_report_link(body.site_url, body.drive_link)
 
     wf = workflow_store.create_workflow(
-        site_url=body.site_url, email=body.email, report_type=body.report_type,
+        site_url=body.site_url, email=body.email,
         scheduled_time=body.scheduled_time, ga4_property_id=body.ga4_property_id,
-        drive_link=body.drive_link,
+        drive_link=body.drive_link, custom_message=body.custom_message,
+        login_id=body.login_id, login_password=body.login_password,
+        recurrence=body.recurrence, send_reminders=body.send_reminders,
     )
     email_scheduler.schedule_workflow(wf["workflow_id"], run_date)
     return wf
+
+
+# ---------------- Bulk / monthly scheduling across many clients (anti-spam stagger) ----------------
+# Sending all clients' reports at the exact same instant looks like a spam
+# blast to mail providers. This spreads sends across several days and
+# staggers them by a few minutes within each day, e.g. 100 clients at
+# daily_batch_size=25 -> 4 days, ~15 min apart within each day.
+
+class BulkWorkflowItem(BaseModel):
+    site_url: str
+    email: Optional[str] = None        # falls back to the site's saved report email
+    ga4_property_id: Optional[str] = None
+    drive_link: Optional[str] = None   # falls back to the site's saved report link
+    login_id: Optional[str] = None
+    login_password: Optional[str] = None
+
+
+class BulkWorkflowCreateBody(BaseModel):
+    items: List[BulkWorkflowItem]
+    start_date: str                    # "YYYY-MM-DD" — first send day
+    start_hour: int = 9                # hour (0-23, Asia/Kolkata) of the first send each day
+    daily_batch_size: int = 25         # how many clients get sent to per day
+    minutes_between_sends: int = 15    # stagger between individual sends within a day
+    recurrence: str = "monthly"        # "once" | "monthly"
+    send_reminders: bool = False       # off by default for bulk/monthly — avoids extra nagging
+    custom_message: Optional[str] = None
+
+
+@app.post("/api/admin/workflow/bulk-create")
+def api_bulk_create_workflow(body: BulkWorkflowCreateBody):
+    if body.recurrence not in ("once", "monthly"):
+        raise HTTPException(status_code=400, detail="recurrence must be 'once' or 'monthly'")
+    if body.daily_batch_size < 1:
+        raise HTTPException(status_code=400, detail="daily_batch_size must be at least 1")
+    if not email_scheduler.email_client.is_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="GMAIL_USER / GMAIL_APP_PASSWORD not set in .env — see email_client.py",
+        )
+    try:
+        start_date = datetime.date.fromisoformat(body.start_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
+
+    created, skipped = [], []
+    for i, item in enumerate(body.items):
+        email = item.email or client_auth.get_report_email(item.site_url)
+        if not email:
+            skipped.append({"site_url": item.site_url, "reason": "No email on file — set one first (via Client Access or a single workflow)."})
+            continue
+
+        drive_link = item.drive_link or client_auth.get_report_link(item.site_url)
+
+        day_offset = i // body.daily_batch_size
+        slot_in_day = i % body.daily_batch_size
+        send_dt = datetime.datetime.combine(
+            start_date + datetime.timedelta(days=day_offset),
+            datetime.time(hour=body.start_hour),
+        ) + datetime.timedelta(minutes=body.minutes_between_sends * slot_in_day)
+
+        client_auth.set_report_email(item.site_url, email)
+        if drive_link:
+            client_auth.set_report_link(item.site_url, drive_link)
+
+        wf = workflow_store.create_workflow(
+            site_url=item.site_url, email=email, scheduled_time=send_dt.isoformat(),
+            ga4_property_id=item.ga4_property_id, drive_link=drive_link,
+            custom_message=body.custom_message, recurrence=body.recurrence,
+            send_reminders=body.send_reminders,
+            login_id=item.login_id, login_password=item.login_password,
+        )
+        email_scheduler.schedule_workflow(wf["workflow_id"], send_dt)
+        created.append({
+            "workflow_id": wf["workflow_id"], "site_url": item.site_url,
+            "email": email, "scheduled_time": send_dt.isoformat(),
+        })
+
+    total_days = (len(body.items) + body.daily_batch_size - 1) // body.daily_batch_size if body.items else 0
+    return {"created": created, "skipped": skipped, "total_days": total_days}
 
 
 @app.get("/api/admin/workflow/list")

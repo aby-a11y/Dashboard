@@ -10,8 +10,12 @@ Flow per workflow:
   1. At scheduled_time -> send the report (initial send)
   2. +24h -> reminder 1
   3. +48h -> reminder 2
-  4. +72h -> reminder 3, then mark the workflow "done" and stop
-     (no more jobs get scheduled after the 3rd reminder)
+  4. +72h -> reminder 3, then:
+     - recurrence == "once": mark the workflow "done" and stop.
+     - recurrence == "monthly": reset the reminder counter and schedule
+       the next initial send exactly one month after this cycle's send
+       date (same day-of-month + time), repeating indefinitely until the
+       admin cancels it.
 
 If a send fails (bad email, Gmail creds missing, etc.) the workflow is
 marked "error" and nothing further is scheduled — it won't retry forever
@@ -20,12 +24,12 @@ fixing the issue.
 """
 
 import datetime
+import calendar
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
 import workflow_store
 import email_client
-from pdf_report import generate_pdf
 
 REMINDER_GAP_HOURS = 24
 MAX_REMINDERS = 3
@@ -36,35 +40,60 @@ scheduler = BackgroundScheduler(
 )
 
 
-def _default_date_range():
-    end = datetime.date.today() - datetime.timedelta(days=3)
-    start = end - datetime.timedelta(days=28)
-    return str(start), str(end)
+def _add_one_month(dt):
+    """Same day-of-month + time, one month later. Clamps the day if the
+    next month is shorter (e.g. Jan 31 -> Feb 28/29)."""
+    year = dt.year + (dt.month // 12)
+    month = dt.month % 12 + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
 
 
 def _build_email(wf, is_reminder, reminder_number):
-    label = f"Reminder #{reminder_number}" if is_reminder else "Report"
-    subject = f"{label}: SEO Report — {wf['site_url']}"
-
-    if wf["report_type"] == "dashboard_pdf":
-        start, end = _default_date_range()
-        pdf_buf = generate_pdf(wf["site_url"], wf.get("ga4_property_id") or "", start, end)
-        pdf_bytes = pdf_buf.read()
-        body_html = f"""
-        <p>Hi,</p>
-        <p>Please find attached the latest SEO &amp; Analytics report for
-        <b>{wf['site_url']}</b> ({start} to {end}).</p>
-        {"<p style='color:#999'>This is a reminder — let us know if you have any questions about the report.</p>" if is_reminder else ""}
-        """
-        return subject, body_html, pdf_bytes
+    """No PDF attachment — the email just contains the client-facing
+    report link and, if the admin set them, the client's login details.
+    A custom_message (if the admin wrote one) replaces the default intro
+    text; the link, login box, and reminder note are still appended."""
+    if is_reminder:
+        subject = f"Reminder #{reminder_number}: Your SEO Report — {wf['site_url']}"
     else:
-        body_html = f"""
+        subject = f"Your SEO Report is Ready — {wf['site_url']}"
+
+    custom_message = (wf.get("custom_message") or "").strip()
+    if custom_message:
+        message_html = "".join(
+            f"<p>{line}</p>" for line in custom_message.splitlines() if line.strip()
+        )
+    else:
+        message_html = f"""
         <p>Hi,</p>
-        <p>Your SEO report for <b>{wf['site_url']}</b> is ready:</p>
-        <p><a href="{wf['drive_link']}">View your report</a></p>
-        {"<p style='color:#999'>This is a reminder — let us know if you have any questions.</p>" if is_reminder else ""}
+        <p>Your latest SEO &amp; Analytics report for <b>{wf['site_url']}</b> is ready.</p>
         """
-        return subject, body_html, None
+
+    drive_link = wf.get("drive_link")
+    link_html = (
+        f'<p>View your report here: <a href="{drive_link}">{drive_link}</a></p>'
+        if drive_link else ""
+    )
+
+    login_id = wf.get("login_id")
+    login_password = wf.get("login_password")
+    login_html = ""
+    if login_id or login_password:
+        login_html = "<p>Your login details:<br>"
+        if login_id:
+            login_html += f"Login ID: <b>{login_id}</b><br>"
+        if login_password:
+            login_html += f"Password: <b>{login_password}</b><br>"
+        login_html += "</p>"
+
+    reminder_html = (
+        "<p style='color:#999'>This is a reminder — let us know if you have any questions about the report.</p>"
+        if is_reminder else ""
+    )
+
+    body_html = message_html + link_html + login_html + reminder_html
+    return subject, body_html
 
 
 def _run_workflow_step(workflow_id):
@@ -75,11 +104,11 @@ def _run_workflow_step(workflow_id):
     is_reminder = wf["status"] != "scheduled"
     reminder_number = wf["reminder_count"] + 1 if is_reminder else 0
 
-    subject, body_html, pdf_bytes = _build_email(wf, is_reminder, reminder_number)
+    subject, body_html = _build_email(wf, is_reminder, reminder_number)
 
     now = datetime.datetime.utcnow().isoformat()
     try:
-        email_client.send_report_email(wf["email"], subject, body_html, pdf_bytes=pdf_bytes)
+        email_client.send_report_email(wf["email"], subject, body_html)
         success = True
     except Exception as ex:
         success = False
@@ -89,16 +118,37 @@ def _run_workflow_step(workflow_id):
 
     wf["history"].append({"sent_at": now, "type": subject, "success": True})
 
-    if is_reminder:
+    send_reminders = wf.get("send_reminders", True)
+    if not send_reminders and not is_reminder:
+        # Reminders disabled for this workflow — treat the initial send as
+        # the whole cycle (skips straight to the done/recurrence check below).
+        new_count = MAX_REMINDERS
+    elif is_reminder:
         new_count = reminder_number
     else:
         new_count = 0
 
     if new_count >= MAX_REMINDERS:
-        workflow_store.update_workflow(
-            workflow_id, status="done", reminder_count=new_count,
-            sent_at=now, next_run_at=None, history=wf["history"],
-        )
+        if wf.get("recurrence") == "monthly":
+            # Recurring workflow: don't stop — schedule the next monthly
+            # send exactly one month after this cycle's original send date,
+            # reset the reminder counter, and go back to "scheduled".
+            last_scheduled = datetime.datetime.fromisoformat(wf["scheduled_time"])
+            next_send = _add_one_month(last_scheduled)
+            workflow_store.update_workflow(
+                workflow_id, status="scheduled", reminder_count=0,
+                sent_at=now, scheduled_time=next_send.isoformat(),
+                next_run_at=next_send.isoformat(), history=wf["history"],
+            )
+            scheduler.add_job(
+                _run_workflow_step, "date", run_date=next_send,
+                args=[workflow_id], id=f"{workflow_id}_initial", replace_existing=True,
+            )
+        else:
+            workflow_store.update_workflow(
+                workflow_id, status="done", reminder_count=(0 if not send_reminders else new_count),
+                sent_at=now, next_run_at=None, history=wf["history"],
+            )
         return
 
     next_run = datetime.datetime.utcnow() + datetime.timedelta(hours=REMINDER_GAP_HOURS)

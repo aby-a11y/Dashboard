@@ -7,6 +7,12 @@
   :root {
     --bg: #0f1115; --card: #171a21; --border: #262a33;
     --text: #e6e8eb; --muted: #9099a6; --accent: #4f8cff; --error: #ff6b6b;
+    --input-bg: #0f1115;
+  }
+  body.light {
+    --bg: #f5f6f8; --card: #ffffff; --border: #dfe2e7;
+    --text: #1a1d23; --muted: #667085; --accent: #2f6fed; --error: #e0463f;
+    --input-bg: #f5f6f8;
   }
   * { box-sizing: border-box; }
   body {
@@ -21,7 +27,7 @@
   label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
   input {
     width: 100%; margin: 6px 0 16px; padding: 10px 12px; border-radius: 8px;
-    border: 1px solid var(--border); background: #0f1115; color: var(--text); font-size: 14px;
+    border: 1px solid var(--border); background: var(--input-bg); color: var(--text); font-size: 14px;
   }
   button {
     width: 100%; background: var(--accent); border: none; color: white; padding: 11px;
@@ -32,7 +38,9 @@
 </style>
 </head>
 <body>
+<script>document.body.classList.toggle('light', localStorage.getItem('dashboardTheme') === 'light');</script>
   <form class="card" id="loginForm">
+    <button type="button" id="themeToggleBtn" style="width:auto; float:right; background:transparent; border:1px solid var(--border); color:var(--text); padding:4px 10px; margin-bottom:10px;" onclick="toggleTheme()" title="Toggle light/dark mode">🌙</button>
     <h1>📊 Client Login</h1>
     <label for="clientId">Client ID</label>
     <input type="text" id="clientId" autocomplete="username" required>
@@ -44,6 +52,14 @@
 
 <script>
 const API = "";
+
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light');
+  localStorage.setItem('dashboardTheme', isLight ? 'light' : 'dark');
+  document.getElementById('themeToggleBtn').textContent = isLight ? '☀️' : '🌙';
+}
+document.getElementById('themeToggleBtn').textContent =
+  document.body.classList.contains('light') ? '☀️' : '🌙';
 
 document.getElementById("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();

@@ -14,6 +14,15 @@
     --accent: #4f8cff;
     --accent2: #33c17a;
   }
+  body.light {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #dfe2e7;
+    --text: #1a1d23;
+    --muted: #667085;
+    --accent: #2f6fed;
+    --accent2: #1f9d5c;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -92,10 +101,12 @@
 </style>
 </head>
 <body>
+<script>document.body.classList.toggle('light', localStorage.getItem('dashboardTheme') === 'light');</script>
 
 <header>
   <h1>📊 <span id="siteLabel">SEO Dashboard</span></h1>
   <div class="controls">
+    <button id="themeToggleBtn" style="background:transparent; border:1px solid var(--border); color:var(--text);" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
     <select id="rangePreset">
       <option value="7">Last 7 days</option>
       <option value="28" selected>Last 28 days</option>
@@ -189,6 +200,16 @@
 <script>
 const API = "";
 let trendChart, deviceChart;
+
+function chartColors() {
+  const cs = getComputedStyle(document.body);
+  return {
+    text: cs.getPropertyValue('--text').trim() || '#e6e8eb',
+    muted: cs.getPropertyValue('--muted').trim() || '#9099a6',
+    border: cs.getPropertyValue('--border').trim() || '#262a33',
+    card: cs.getPropertyValue('--card').trim() || '#171a21',
+  };
+}
 
 // ---- auth guard: bounce to login if there's no session token ----
 const CLIENT_TOKEN = localStorage.getItem("client_token");
@@ -351,6 +372,7 @@ async function loadTrend() {
     const clicks = d.rows.map(r => r.clicks);
     const impressions = d.rows.map(r => r.impressions);
     if (trendChart) trendChart.destroy();
+    const c = chartColors();
     trendChart = new Chart(ctx, {
       type: "line",
       data: {
@@ -364,11 +386,11 @@ async function loadTrend() {
         responsive: true,
         interaction: { mode: "index", intersect: false },
         scales: {
-          y: { position: "left", ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
-          y1: { position: "right", ticks: { color: "#9099a6" }, grid: { display: false } },
-          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          y: { position: "left", ticks: { color: c.muted }, grid: { color: c.border } },
+          y1: { position: "right", ticks: { color: c.muted }, grid: { display: false } },
+          x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+        plugins: { legend: { labels: { color: c.text } } }
       }
     });
   } catch (e) {
@@ -376,32 +398,53 @@ async function loadTrend() {
   }
 }
 
-function renderTable(rows, keyName, keyLabel) {
+/* Shared "top 5, then Load more" helper for any data table. Renders the
+   first `pageSize` rows in a visible <tbody>, the rest in a hidden one;
+   loadMoreLink() reveals the rest with a click, no re-fetch needed. */
+function tbodyWithLoadMore(tableId, rows, rowHtmlFn, pageSize = 5) {
+  const visible = rows.slice(0, pageSize);
+  const rest = rows.slice(pageSize);
+  let html = `<tbody>${visible.map(rowHtmlFn).join("")}</tbody>`;
+  if (rest.length) {
+    html += `<tbody id="${tableId}_more" style="display:none;">${rest.map(rowHtmlFn).join("")}</tbody>`;
+  }
+  return { html, moreCount: rest.length };
+}
+function loadMoreLink(tableId, count) {
+  if (!count) return "";
+  return `<div style="text-align:center; margin-top:8px;">
+    <a href="#" onclick="document.getElementById('${tableId}_more').style.display='table-row-group'; this.parentElement.style.display='none'; return false;" style="color:var(--accent); font-size:13px; cursor:pointer;">Load ${count} more ▾</a>
+  </div>`;
+}
+
+function renderTable(rows, keyName, keyLabel, tableId) {
   if (!rows.length) return `<div class="loading">No data for this range</div>`;
-  return `
-    <table>
-      <thead><tr>
-        <th>${keyLabel}</th><th class="num">Clicks</th><th class="num">Impr.</th>
-        <th class="num">CTR</th><th class="num">Pos.</th>
-      </tr></thead>
-      <tbody>
-        ${rows.map(r => `
+  tableId = tableId || ("tbl_" + keyName);
+  const rowHtml = r => `
           <tr>
             <td title="${r[keyName]}">${String(r[keyName]).slice(0, 45)}</td>
             <td class="num">${r.clicks}</td>
             <td class="num">${r.impressions}</td>
             <td class="num">${r.ctr}%</td>
             <td class="num">${r.position}</td>
-          </tr>`).join("")}
-      </tbody>
-    </table>`;
+          </tr>`;
+  const { html: bodyHtml, moreCount } = tbodyWithLoadMore(tableId, rows, rowHtml);
+  return `
+    <table>
+      <thead><tr>
+        <th>${keyLabel}</th><th class="num">Clicks</th><th class="num">Impr.</th>
+        <th class="num">CTR</th><th class="num">Pos.</th>
+      </tr></thead>
+      ${bodyHtml}
+    </table>
+    ${loadMoreLink(tableId, moreCount)}`;
 }
 
 async function loadQueries() {
   const el = document.getElementById("queriesTable");
   try {
     const d = await fetchJSON(`${API}/api/client/queries?limit=15${dateParams()}`);
-    el.innerHTML = renderTable(d.rows, "query", "Query");
+    el.innerHTML = renderTable(d.rows, "query", "Query", "queriesTbl");
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
@@ -409,15 +452,16 @@ async function loadPages() {
   const el = document.getElementById("pagesTable");
   try {
     const d = await fetchJSON(`${API}/api/client/pages?limit=15${dateParams()}`);
-    el.innerHTML = renderTable(d.rows, "page", "Page");
+    el.innerHTML = renderTable(d.rows, "page", "Page", "pagesTbl");
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
 async function loadCountries() {
   const el = document.getElementById("countriesTable");
   try {
-    const d = await fetchJSON(`${API}/api/client/countries?limit=10${dateParams()}`);
-    el.innerHTML = renderTable(d.rows, "country", "Country");
+    const d = await fetchJSON(`${API}/api/client/countries?limit=20${dateParams()}`);
+    const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
+    el.innerHTML = renderTable(rows, "country", "Country", "countriesTbl");
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
@@ -482,42 +526,14 @@ function countryDisplayName(code) {
   return COUNTRY_NAMES[key] || String(code).toUpperCase();
 }
 
-async function loadCountries() {
-  const el = document.getElementById("countriesTable");
-  try {
-    const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
-    const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
-    el.innerHTML = `
-  <table>
-    <thead>
-      <tr>
-        <th>Country</th>
-        <th class="num">Clicks</th>
-        <th class="num">Impr.</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows.map(r => `
-        <tr>
-          <td title="${r.country}">${String(r.country).slice(0, 45)}</td>
-          <td class="num">${r.clicks}</td>
-          <td class="num">${r.impressions}</td>
-        </tr>
-      `).join("")}
-    </tbody>
-  </table>
-`;
-  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
-}
-
-
-/* Shared legend styling for both donut charts — explicit white text,
-   set per-item too so it can't fall back to a dark default. */
+/* Shared legend styling for both donut charts — theme-aware text color
+   (uses --text so it reads correctly in both dark and light mode). */
 function donutLegend() {
+  const c = chartColors();
   return {
     position: "bottom",
     labels: {
-      color: "#ffffff",
+      color: c.text,
       font: { size: 12, weight: "600" },
       boxWidth: 10,
       padding: 12,
@@ -527,8 +543,8 @@ function donutLegend() {
           text: `${label}  ${ds.data[i]}`,
           fillStyle: ds.backgroundColor[i],
           strokeStyle: ds.backgroundColor[i],
-          fontColor: "#ffffff",
-          color: "#ffffff",
+          fontColor: c.text,
+          color: c.text,
           hidden: false,
           index: i
         }));
@@ -693,6 +709,7 @@ async function loadRankHistory(keyword) {
   try {
     const d = await fetchJSON(`${API}/api/client/rank-tracker/history?keyword=${encodeURIComponent(keyword)}${dateParams()}`);
     if (rankHistoryChart) rankHistoryChart.destroy();
+    const c = chartColors();
     rankHistoryChart = new Chart(ctx, {
       type: "line",
       data: {
@@ -707,10 +724,10 @@ async function loadRankHistory(keyword) {
       options: {
         responsive: true,
         scales: {
-          y: { reverse: true, ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
-          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          y: { reverse: true, ticks: { color: c.muted }, grid: { color: c.border } },
+          x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+        plugins: { legend: { labels: { color: c.text } } }
       }
     });
   } catch (e) {
@@ -808,6 +825,7 @@ async function loadGa4Trend() {
   try {
     const d = await fetchJSON(`${API}/api/client/ga4/trend?property_id=${pid}${dateParams()}`);
     if (ga4TrendChart) ga4TrendChart.destroy();
+    const c = chartColors();
     ga4TrendChart = new Chart(ctx, {
       type: "line",
       data: {
@@ -820,10 +838,10 @@ async function loadGa4Trend() {
       options: {
         responsive: true,
         scales: {
-          y: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
-          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          y: { ticks: { color: c.muted }, grid: { color: c.border } },
+          x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+        plugins: { legend: { labels: { color: c.text } } }
       }
     });
   } catch (e) {
@@ -865,18 +883,19 @@ async function loadGa4Pages() {
   try {
     const d = await fetchJSON(`${API}/api/client/ga4/pages?property_id=${pid}&limit=15${dateParams()}`);
     if (!d.rows.length) { el.innerHTML = `<div class="loading">No data for this range</div>`; return; }
-    el.innerHTML = `
-      <table>
-        <thead><tr><th>Page</th><th class="num">Views</th><th class="num">Users</th></tr></thead>
-        <tbody>
-          ${d.rows.map(r => `
+    const rowHtml = r => `
             <tr>
               <td title="${r.page}">${r.page.slice(0, 60)}</td>
               <td class="num">${r.views}</td>
               <td class="num">${r.users}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>`;
+            </tr>`;
+    const { html: bodyHtml, moreCount } = tbodyWithLoadMore("ga4PagesTbl", d.rows, rowHtml);
+    el.innerHTML = `
+      <table>
+        <thead><tr><th>Page</th><th class="num">Views</th><th class="num">Users</th></tr></thead>
+        ${bodyHtml}
+      </table>
+      ${loadMoreLink("ga4PagesTbl", moreCount)}`;
   } catch (e) {
     el.innerHTML = `<div class="error">${e.message}</div>`;
   }
@@ -901,7 +920,38 @@ async function loadAll() {
   loadGa4Pages();
 }
 
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light');
+  localStorage.setItem('dashboardTheme', isLight ? 'light' : 'dark');
+  document.getElementById('themeToggleBtn').textContent = isLight ? '☀️' : '🌙';
+  refreshChartTheme();
+}
+
+function refreshChartTheme() {
+  const c = chartColors();
+  [trendChart, rankHistoryChart, ga4TrendChart].forEach(chart => {
+    if (!chart) return;
+    if (chart.options.scales.y) {
+      chart.options.scales.y.ticks.color = c.muted;
+      if (chart.options.scales.y.grid) chart.options.scales.y.grid.color = c.border;
+    }
+    if (chart.options.scales.x) {
+      chart.options.scales.x.ticks.color = c.muted;
+      if (chart.options.scales.x.grid) chart.options.scales.x.grid.color = c.border;
+    }
+    chart.options.plugins.legend.labels.color = c.text;
+    chart.update();
+  });
+  [deviceChart, ga4TrafficChart].forEach(chart => {
+    if (!chart) return;
+    chart.options.plugins.legend = donutLegend();
+    chart.update();
+  });
+}
+
 (function init() {
+  document.getElementById('themeToggleBtn').textContent =
+    document.body.classList.contains('light') ? '☀️' : '🌙';
   initClientView();
   document.getElementById("rangePreset").addEventListener("change", () => {
     applyPresetToInputs();

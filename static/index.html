@@ -14,6 +14,15 @@
     --accent: #4f8cff;
     --accent2: #33c17a;
   }
+  body.light {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --border: #dfe2e7;
+    --text: #1a1d23;
+    --muted: #667085;
+    --accent: #2f6fed;
+    --accent2: #1f9d5c;
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -165,10 +174,12 @@
 </style>
 </head>
 <body>
+<script>document.body.classList.toggle('light', localStorage.getItem('dashboardTheme') === 'light');</script>
 
 <header>
   <h1>📊 SEO Client Dashboard</h1>
   <div class="controls">
+    <button id="themeToggleBtn" class="more-menu-btn" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
     <select id="siteSelect"><option>Loading sites...</option></select>
     <select id="rangePreset">
       <option value="7">Last 7 days</option>
@@ -208,6 +219,10 @@
       <span class="mm-icon">⏱️</span>
       <span><span class="mm-label">Email Workflow</span><span class="mm-sub">Schedule report &amp; reminders</span></span>
     </button>
+    <button class="more-menu-item" onclick="closeMoreMenu(); openBulkModal();">
+      <span class="mm-icon">📅</span>
+      <span><span class="mm-label">Bulk Monthly Schedule</span><span class="mm-sub">Auto-spread sends across clients &amp; days</span></span>
+    </button>
   </div>
 </div>
 
@@ -221,20 +236,55 @@
     <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
       <input type="email" id="wfEmail" placeholder="Client owner's email address">
 
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Client-facing report link</label>
+        <input type="text" id="wfDriveLink" placeholder="Link to their report / dashboard login page" style="width:100%;">
+      </div>
+
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Custom email message (optional — leave blank to use the default message)</label>
+        <textarea id="wfCustomMessage" rows="4" placeholder="Hi, your latest SEO report is ready..." style="width:100%; resize:vertical; background:var(--card); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:8px 10px; font-family:inherit; font-size:13px;"></textarea>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <div style="flex:1;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Login ID (optional)</label>
+          <input type="text" id="wfLoginId" placeholder="Client's login ID" style="width:100%;">
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Login password (optional)</label>
+          <input type="text" id="wfLoginPassword" placeholder="Client's login password" style="width:100%;">
+        </div>
+      </div>
+
       <div style="display:flex; gap:16px; font-size:13px; color:var(--text);">
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-          <input type="radio" name="wfReportType" value="dashboard_pdf" checked onchange="onWfReportTypeChange()"> Dashboard PDF
+          <input type="checkbox" id="wfRecurMonthly" onchange="onWfRecurrenceChange()"> Repeat monthly
         </label>
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-          <input type="radio" name="wfReportType" value="external_link" onchange="onWfReportTypeChange()"> External Report Link
+          <input type="checkbox" id="wfSendReminders" checked> Send 3 follow-up reminders (24h apart)
         </label>
       </div>
 
-      <input type="text" id="wfDriveLink" placeholder="Report link (e.g. Google Drive URL)" style="display:none;">
-
-      <div>
+      <div id="wfOnceSection">
         <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Send at</label>
         <input type="datetime-local" id="wfScheduledTime" style="width:100%;">
+      </div>
+
+      <div id="wfMonthlySection" style="display:none; gap:10px;">
+        <div style="display:flex; gap:10px;">
+          <div style="flex:1;">
+            <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Day of month (1–28)</label>
+            <input type="number" id="wfMonthlyDay" min="1" max="28" value="1" style="width:100%;">
+          </div>
+          <div style="flex:1;">
+            <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Time</label>
+            <input type="time" id="wfMonthlyTime" value="09:00" style="width:100%;">
+          </div>
+        </div>
+        <div style="color:var(--muted); font-size:12px; margin-top:6px;">
+          Sends on this date every month. If the date this month has already passed, the first send goes out next month.
+        </div>
       </div>
 
       <div style="display:flex; gap:10px; align-items:center;">
@@ -242,12 +292,78 @@
         <span id="wfStatus" style="color:var(--muted); font-size:13px;"></span>
       </div>
       <div style="color:var(--muted); font-size:12px;">
-        Sends the report at the scheduled time, then automatically reminds 3 more times, 24 hours apart, then stops.
+        The email contains the report link and login details above (no PDF attachment). "Repeat monthly" auto-schedules the next send one month later, same day &amp; time, until you cancel it.
       </div>
     </div>
 
     <div class="section-title" style="font-size:13px;">Workflows for this site</div>
     <div id="wfList" class="loading">Loading...</div>
+  </div>
+</div>
+
+<div id="bulkOverlay" class="workflow-overlay" style="display:none;" onclick="if(event.target===this) closeBulkModal()">
+  <div class="workflow-modal">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <div class="section-title" style="margin:0;">Bulk Monthly Schedule</div>
+      <button onclick="closeBulkModal()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+    </div>
+    <div style="color:var(--muted); font-size:12px; margin-bottom:14px;">
+      Select clients below. Sends are auto-spread across days so it doesn't look like a spam blast — e.g. 100 clients at a batch size of 25 go out over 4 days, a few minutes apart within each day.
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
+      <div style="display:flex; gap:10px;">
+        <div style="flex:1;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Start date</label>
+          <input type="date" id="bulkStartDate" style="width:100%;">
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Start hour (0–23)</label>
+          <input type="number" id="bulkStartHour" min="0" max="23" value="9" style="width:100%;">
+        </div>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <div style="flex:1;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Clients per day</label>
+          <input type="number" id="bulkBatchSize" min="1" value="25" style="width:100%;">
+        </div>
+        <div style="flex:1;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Minutes between sends</label>
+          <input type="number" id="bulkGapMinutes" min="1" value="15" style="width:100%;">
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Custom email message (optional — leave blank to use the default message)</label>
+        <textarea id="bulkCustomMessage" rows="3" placeholder="Hi, your latest SEO report is ready..." style="width:100%; resize:vertical; background:var(--card); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:8px 10px; font-family:inherit; font-size:13px;"></textarea>
+      </div>
+
+      <div style="display:flex; gap:16px; font-size:13px; color:var(--text);">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="bulkRecurMonthly" checked> Repeat monthly
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="bulkSendReminders"> Send 3 follow-up reminders (24h apart)
+        </label>
+      </div>
+      <div style="color:var(--muted); font-size:12px;">
+        Each client's report link and login details come from Client Access (set them there first) — this just schedules the sends and spreads them out.
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="section-title" style="font-size:13px; margin:0;">Select clients</div>
+      <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <input type="checkbox" id="bulkSelectAll" onchange="toggleBulkSelectAll()"> Select all
+      </label>
+    </div>
+    <div id="bulkClientList" class="loading" style="max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; padding:8px;">Loading clients...</div>
+
+    <div style="display:flex; gap:10px; align-items:center; margin-top:14px;">
+      <button onclick="startBulkWorkflow()">Schedule Selected</button>
+      <span id="bulkStatus" style="color:var(--muted); font-size:13px;"></span>
+    </div>
+    <div id="bulkResults" style="margin-top:10px; font-size:13px;"></div>
   </div>
 </div>
 
@@ -368,6 +484,16 @@
 <script>
 const API = "";
 let trendChart, deviceChart;
+
+function chartColors() {
+  const cs = getComputedStyle(document.body);
+  return {
+    text: cs.getPropertyValue('--text').trim() || '#e6e8eb',
+    muted: cs.getPropertyValue('--muted').trim() || '#9099a6',
+    border: cs.getPropertyValue('--border').trim() || '#262a33',
+    card: cs.getPropertyValue('--card').trim() || '#171a21',
+  };
+}
 
 async function fetchJSON(url, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -512,6 +638,7 @@ async function loadTrend() {
     const clicks = d.rows.map(r => r.clicks);
     const impressions = d.rows.map(r => r.impressions);
     if (trendChart) trendChart.destroy();
+    const c = chartColors();
     trendChart = new Chart(ctx, {
       type: "line",
       data: {
@@ -525,11 +652,11 @@ async function loadTrend() {
         responsive: true,
         interaction: { mode: "index", intersect: false },
         scales: {
-          y: { position: "left", ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
-          y1: { position: "right", ticks: { color: "#9099a6" }, grid: { display: false } },
-          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          y: { position: "left", ticks: { color: c.muted }, grid: { color: c.border } },
+          y1: { position: "right", ticks: { color: c.muted }, grid: { display: false } },
+          x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+        plugins: { legend: { labels: { color: c.text } } }
       }
     });
   } catch (e) {
@@ -537,32 +664,53 @@ async function loadTrend() {
   }
 }
 
-function renderTable(rows, keyName, keyLabel) {
+/* Shared "top 5, then Load more" helper for any data table. Renders the
+   first `pageSize` rows in a visible <tbody>, the rest in a hidden one;
+   loadMoreLink() reveals the rest with a click, no re-fetch needed. */
+function tbodyWithLoadMore(tableId, rows, rowHtmlFn, pageSize = 5) {
+  const visible = rows.slice(0, pageSize);
+  const rest = rows.slice(pageSize);
+  let html = `<tbody>${visible.map(rowHtmlFn).join("")}</tbody>`;
+  if (rest.length) {
+    html += `<tbody id="${tableId}_more" style="display:none;">${rest.map(rowHtmlFn).join("")}</tbody>`;
+  }
+  return { html, moreCount: rest.length };
+}
+function loadMoreLink(tableId, count) {
+  if (!count) return "";
+  return `<div style="text-align:center; margin-top:8px;">
+    <a href="#" onclick="document.getElementById('${tableId}_more').style.display='table-row-group'; this.parentElement.style.display='none'; return false;" style="color:var(--accent); font-size:13px; cursor:pointer;">Load ${count} more ▾</a>
+  </div>`;
+}
+
+function renderTable(rows, keyName, keyLabel, tableId) {
   if (!rows.length) return `<div class="loading">No data for this range</div>`;
-  return `
-    <table>
-      <thead><tr>
-        <th>${keyLabel}</th><th class="num">Clicks</th><th class="num">Impr.</th>
-        <th class="num">CTR</th><th class="num">Pos.</th>
-      </tr></thead>
-      <tbody>
-        ${rows.map(r => `
+  tableId = tableId || ("tbl_" + keyName);
+  const rowHtml = r => `
           <tr>
             <td title="${r[keyName]}">${String(r[keyName]).slice(0, 45)}</td>
             <td class="num">${r.clicks}</td>
             <td class="num">${r.impressions}</td>
             <td class="num">${r.ctr}%</td>
             <td class="num">${r.position}</td>
-          </tr>`).join("")}
-      </tbody>
-    </table>`;
+          </tr>`;
+  const { html: bodyHtml, moreCount } = tbodyWithLoadMore(tableId, rows, rowHtml);
+  return `
+    <table>
+      <thead><tr>
+        <th>${keyLabel}</th><th class="num">Clicks</th><th class="num">Impr.</th>
+        <th class="num">CTR</th><th class="num">Pos.</th>
+      </tr></thead>
+      ${bodyHtml}
+    </table>
+    ${loadMoreLink(tableId, moreCount)}`;
 }
 
 async function loadQueries() {
   const el = document.getElementById("queriesTable");
   try {
     const d = await fetchJSON(`${API}/api/queries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=15`);
-    el.innerHTML = renderTable(d.rows, "query", "Query");
+    el.innerHTML = renderTable(d.rows, "query", "Query", "queriesTbl");
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
@@ -570,7 +718,7 @@ async function loadPages() {
   const el = document.getElementById("pagesTable");
   try {
     const d = await fetchJSON(`${API}/api/pages?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=15`);
-    el.innerHTML = renderTable(d.rows, "page", "Page");
+    el.innerHTML = renderTable(d.rows, "page", "Page", "pagesTbl");
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
@@ -638,19 +786,20 @@ function countryDisplayName(code) {
 async function loadCountries() {
   const el = document.getElementById("countriesTable");
   try {
-    const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
+    const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=20`);
     const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
-    el.innerHTML = renderTable(rows, "country", "Country");
+    el.innerHTML = renderTable(rows, "country", "Country", "countriesTbl");
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
-/* Shared legend styling for both donut charts — explicit white text,
-   set per-item too so it can't fall back to a dark default. */
+/* Shared legend styling for both donut charts — theme-aware text color
+   (uses --text so it reads correctly in both dark and light mode). */
 function donutLegend() {
+  const c = chartColors();
   return {
     position: "bottom",
     labels: {
-      color: "#ffffff",
+      color: c.text,
       font: { size: 12, weight: "600" },
       boxWidth: 10,
       padding: 12,
@@ -660,8 +809,8 @@ function donutLegend() {
           text: `${label}  ${ds.data[i]}`,
           fillStyle: ds.backgroundColor[i],
           strokeStyle: ds.backgroundColor[i],
-          fontColor: "#ffffff",
-          color: "#ffffff",
+          fontColor: c.text,
+          color: c.text,
           hidden: false,
           index: i
         }));
@@ -852,6 +1001,7 @@ async function loadRankHistory(keyword) {
   try {
     const d = await fetchJSON(`${API}/api/rank-tracker/history?site_url=${encodeURIComponent(currentSite())}&keyword=${encodeURIComponent(keyword)}${dateParams()}`);
     if (rankHistoryChart) rankHistoryChart.destroy();
+    const c = chartColors();
     rankHistoryChart = new Chart(ctx, {
       type: "line",
       data: {
@@ -866,10 +1016,10 @@ async function loadRankHistory(keyword) {
       options: {
         responsive: true,
         scales: {
-          y: { reverse: true, ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
-          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          y: { reverse: true, ticks: { color: c.muted }, grid: { color: c.border } },
+          x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+        plugins: { legend: { labels: { color: c.text } } }
       }
     });
   } catch (e) {
@@ -1057,6 +1207,7 @@ async function loadGa4Trend() {
   try {
     const d = await fetchJSON(`${API}/api/ga4/trend?property_id=${pid}${dateParams()}`);
     if (ga4TrendChart) ga4TrendChart.destroy();
+    const c = chartColors();
     ga4TrendChart = new Chart(ctx, {
       type: "line",
       data: {
@@ -1069,10 +1220,10 @@ async function loadGa4Trend() {
       options: {
         responsive: true,
         scales: {
-          y: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
-          x: { ticks: { color: "#9099a6" }, grid: { color: "#262a33" } },
+          y: { ticks: { color: c.muted }, grid: { color: c.border } },
+          x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: "#e6e8eb" } } }
+        plugins: { legend: { labels: { color: c.text } } }
       }
     });
   } catch (e) {
@@ -1114,18 +1265,19 @@ async function loadGa4Pages() {
   try {
     const d = await fetchJSON(`${API}/api/ga4/pages?property_id=${pid}${dateParams()}&limit=15`);
     if (!d.rows.length) { el.innerHTML = `<div class="loading">No data for this range</div>`; return; }
-    el.innerHTML = `
-      <table>
-        <thead><tr><th>Page</th><th class="num">Views</th><th class="num">Users</th></tr></thead>
-        <tbody>
-          ${d.rows.map(r => `
+    const rowHtml = r => `
             <tr>
               <td title="${r.page}">${r.page.slice(0, 60)}</td>
               <td class="num">${r.views}</td>
               <td class="num">${r.users}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>`;
+            </tr>`;
+    const { html: bodyHtml, moreCount } = tbodyWithLoadMore("ga4PagesTbl", d.rows, rowHtml);
+    el.innerHTML = `
+      <table>
+        <thead><tr><th>Page</th><th class="num">Views</th><th class="num">Users</th></tr></thead>
+        ${bodyHtml}
+      </table>
+      ${loadMoreLink("ga4PagesTbl", moreCount)}`;
   } catch (e) {
     el.innerHTML = `<div class="error">${e.message}</div>`;
   }
@@ -1272,6 +1424,41 @@ function currentSiteUrl() {
   return document.getElementById("siteSelect").value;
 }
 
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light');
+  localStorage.setItem('dashboardTheme', isLight ? 'light' : 'dark');
+  document.getElementById('themeToggleBtn').textContent = isLight ? '☀️' : '🌙';
+  refreshChartTheme();
+}
+
+/* Re-colors any already-rendered charts after a theme switch, without
+   re-fetching data. */
+function refreshChartTheme() {
+  const c = chartColors();
+  [trendChart, rankHistoryChart, ga4TrendChart].forEach(chart => {
+    if (!chart) return;
+    if (chart.options.scales.y) {
+      chart.options.scales.y.ticks.color = c.muted;
+      if (chart.options.scales.y.grid) chart.options.scales.y.grid.color = c.border;
+    }
+    if (chart.options.scales.x) {
+      chart.options.scales.x.ticks.color = c.muted;
+      if (chart.options.scales.x.grid) chart.options.scales.x.grid.color = c.border;
+    }
+    chart.options.plugins.legend.labels.color = c.text;
+    chart.update();
+  });
+  [deviceChart, ga4TrafficChart].forEach(chart => {
+    if (!chart) return;
+    chart.options.plugins.legend = donutLegend();
+    chart.update();
+  });
+}
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('themeToggleBtn').textContent =
+    document.body.classList.contains('light') ? '☀️' : '🌙';
+});
+
 async function openWorkflowModal() {
   const site = currentSiteUrl();
   if (!site) { alert("Select a site first."); return; }
@@ -1279,8 +1466,14 @@ async function openWorkflowModal() {
   document.getElementById("wfSiteLabel").textContent = site;
   document.getElementById("wfStatus").textContent = "";
   document.getElementById("wfDriveLink").value = "";
-  document.querySelector('input[name="wfReportType"][value="dashboard_pdf"]').checked = true;
-  onWfReportTypeChange();
+  document.getElementById("wfCustomMessage").value = "";
+  document.getElementById("wfLoginId").value = "";
+  document.getElementById("wfLoginPassword").value = "";
+  document.getElementById("wfRecurMonthly").checked = false;
+  document.getElementById("wfSendReminders").checked = true;
+  document.getElementById("wfMonthlyDay").value = 1;
+  document.getElementById("wfMonthlyTime").value = "09:00";
+  onWfRecurrenceChange();
 
   // default schedule time = now, rounded to next 5 minutes
   const now = new Date(Date.now() + 5 * 60000);
@@ -1295,7 +1488,7 @@ async function openWorkflowModal() {
     document.getElementById("wfEmail").value = data.email || "";
   } catch (e) { /* non-fatal — just leave the field empty */ }
 
-  // prefill an existing drive link if one is saved (used if they switch to External Report Link)
+  // prefill an existing drive link if one is saved for this site
   try {
     const data = await fetch(`${API}/api/admin/report-link?site_url=${encodeURIComponent(site)}`).then(r => r.json());
     if (data.drive_link) document.getElementById("wfDriveLink").value = data.drive_link;
@@ -1308,24 +1501,151 @@ function closeWorkflowModal() {
   document.getElementById("workflowOverlay").style.display = "none";
 }
 
-function onWfReportTypeChange() {
-  const type = document.querySelector('input[name="wfReportType"]:checked').value;
-  document.getElementById("wfDriveLink").style.display = type === "external_link" ? "block" : "none";
+/* ---------------- Bulk Monthly Schedule ---------------- */
+
+async function openBulkModal() {
+  document.getElementById("bulkStatus").textContent = "";
+  document.getElementById("bulkResults").innerHTML = "";
+  document.getElementById("bulkCustomMessage").value = "";
+  document.getElementById("bulkSelectAll").checked = false;
+  document.getElementById("bulkRecurMonthly").checked = true;
+  document.getElementById("bulkSendReminders").checked = false;
+  document.getElementById("bulkBatchSize").value = 25;
+  document.getElementById("bulkGapMinutes").value = 15;
+  document.getElementById("bulkStartHour").value = 9;
+
+  // default start date = tomorrow
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60000);
+  document.getElementById("bulkStartDate").value = tomorrow.toISOString().slice(0, 10);
+
+  document.getElementById("bulkOverlay").style.display = "flex";
+
+  const listEl = document.getElementById("bulkClientList");
+  listEl.innerHTML = "Loading clients...";
+  try {
+    const clients = await fetch(`${API}/api/admin/clients`).then(r => r.json());
+    if (!clients.length) {
+      listEl.innerHTML = `<div class="loading">No clients set up yet — add logins in Client Access first.</div>`;
+      return;
+    }
+    listEl.innerHTML = clients.map(c => `
+      <label style="display:flex; align-items:center; gap:8px; padding:6px 4px; font-size:13px; cursor:pointer; border-bottom:1px solid var(--border);">
+        <input type="checkbox" class="bulkClientCheckbox" value="${c.site_url}">
+        <span style="flex:1;">${c.name || c.client_id} <span style="color:var(--muted);">— ${c.site_url}</span></span>
+      </label>`).join("");
+  } catch (e) {
+    listEl.innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+function closeBulkModal() {
+  document.getElementById("bulkOverlay").style.display = "none";
+}
+
+function toggleBulkSelectAll() {
+  const checked = document.getElementById("bulkSelectAll").checked;
+  document.querySelectorAll(".bulkClientCheckbox").forEach(cb => cb.checked = checked);
+}
+
+async function startBulkWorkflow() {
+  const statusEl = document.getElementById("bulkStatus");
+  const resultsEl = document.getElementById("bulkResults");
+  resultsEl.innerHTML = "";
+
+  const siteUrls = Array.from(document.querySelectorAll(".bulkClientCheckbox:checked")).map(cb => cb.value);
+  if (!siteUrls.length) { statusEl.textContent = "Select at least one client."; return; }
+
+  const start_date = document.getElementById("bulkStartDate").value;
+  if (!start_date) { statusEl.textContent = "Pick a start date."; return; }
+
+  const start_hour = parseInt(document.getElementById("bulkStartHour").value, 10);
+  const daily_batch_size = parseInt(document.getElementById("bulkBatchSize").value, 10);
+  const minutes_between_sends = parseInt(document.getElementById("bulkGapMinutes").value, 10);
+  const custom_message = document.getElementById("bulkCustomMessage").value.trim();
+  const recurrence = document.getElementById("bulkRecurMonthly").checked ? "monthly" : "once";
+  const send_reminders = document.getElementById("bulkSendReminders").checked;
+
+  statusEl.textContent = `Scheduling ${siteUrls.length} clients...`;
+  try {
+    const res = await fetch(`${API}/api/admin/workflow/bulk-create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: siteUrls.map(site_url => ({ site_url })),
+        start_date, start_hour, daily_batch_size, minutes_between_sends,
+        recurrence, send_reminders,
+        custom_message: custom_message || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to schedule");
+
+    statusEl.textContent = `Done — ${data.created.length} scheduled across ${data.total_days} day(s)${data.skipped.length ? `, ${data.skipped.length} skipped` : ""}.`;
+
+    let html = "";
+    if (data.skipped.length) {
+      html += `<div style="color:#e0463f; margin-bottom:6px;">Skipped:</div><ul style="margin:0 0 8px 18px; padding:0; color:var(--muted);">`;
+      html += data.skipped.map(s => `<li>${s.site_url} — ${s.reason}</li>`).join("");
+      html += `</ul>`;
+    }
+    if (data.created.length) {
+      html += `<details><summary style="cursor:pointer; color:var(--accent);">View schedule (${data.created.length})</summary>`;
+      html += `<ul style="margin:6px 0 0 18px; padding:0; color:var(--muted);">`;
+      html += data.created.map(c => `<li>${c.site_url} — ${new Date(c.scheduled_time).toLocaleString()}</li>`).join("");
+      html += `</ul></details>`;
+    }
+    resultsEl.innerHTML = html;
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  }
+}
+
+function onWfRecurrenceChange() {
+  const monthly = document.getElementById("wfRecurMonthly").checked;
+  document.getElementById("wfOnceSection").style.display = monthly ? "none" : "block";
+  document.getElementById("wfMonthlySection").style.display = monthly ? "block" : "none";
+}
+
+/* Given a day-of-month (1-28) and a "HH:MM" time, returns the next
+   occurrence as a local "YYYY-MM-DDTHH:MM" string — this month if that
+   date/time hasn't passed yet, otherwise next month. */
+function nextMonthlyOccurrence(day, timeStr) {
+  const [hh, mm] = timeStr.split(":").map(Number);
+  const now = new Date();
+  const build = (year, month) => {
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return new Date(year, month, Math.min(day, lastDay), hh, mm, 0, 0);
+  };
+  let candidate = build(now.getFullYear(), now.getMonth());
+  if (candidate <= now) candidate = build(now.getFullYear(), now.getMonth() + 1);
+  const pad = n => String(n).padStart(2, "0");
+  return `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}T${pad(candidate.getHours())}:${pad(candidate.getMinutes())}`;
 }
 
 async function startWorkflow() {
   const statusEl = document.getElementById("wfStatus");
   const site_url = currentSiteUrl();
   const email = document.getElementById("wfEmail").value.trim();
-  const report_type = document.querySelector('input[name="wfReportType"]:checked').value;
   const drive_link = document.getElementById("wfDriveLink").value.trim();
-  const scheduled_time = document.getElementById("wfScheduledTime").value;
+  const custom_message = document.getElementById("wfCustomMessage").value.trim();
+  const login_id = document.getElementById("wfLoginId").value.trim();
+  const login_password = document.getElementById("wfLoginPassword").value.trim();
   const ga4_property_id = document.getElementById("ga4PropertyId").value.trim() || undefined;
+  const recurrence = document.getElementById("wfRecurMonthly").checked ? "monthly" : "once";
+  const send_reminders = document.getElementById("wfSendReminders").checked;
 
   if (!email) { statusEl.textContent = "Enter the client's email address."; return; }
-  if (!scheduled_time) { statusEl.textContent = "Pick a send time."; return; }
-  if (report_type === "external_link" && !drive_link) {
-    statusEl.textContent = "Enter the report link."; return;
+
+  let scheduled_time;
+  if (recurrence === "monthly") {
+    const day = parseInt(document.getElementById("wfMonthlyDay").value, 10);
+    const time = document.getElementById("wfMonthlyTime").value;
+    if (!day || day < 1 || day > 28) { statusEl.textContent = "Enter a day of month between 1 and 28."; return; }
+    if (!time) { statusEl.textContent = "Pick a send time."; return; }
+    scheduled_time = nextMonthlyOccurrence(day, time);
+  } else {
+    scheduled_time = document.getElementById("wfScheduledTime").value;
+    if (!scheduled_time) { statusEl.textContent = "Pick a send time."; return; }
   }
 
   statusEl.textContent = "Starting...";
@@ -1334,13 +1654,19 @@ async function startWorkflow() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        site_url, email, report_type, scheduled_time,
-        ga4_property_id, drive_link: report_type === "external_link" ? drive_link : undefined,
+        site_url, email, scheduled_time, ga4_property_id,
+        drive_link: drive_link || undefined,
+        custom_message: custom_message || undefined,
+        login_id: login_id || undefined,
+        login_password: login_password || undefined,
+        recurrence, send_reminders,
       }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Failed to start workflow");
-    statusEl.textContent = "Workflow scheduled ✓";
+    statusEl.textContent = recurrence === "monthly"
+      ? `Scheduled ✓ — first send ${new Date(scheduled_time).toLocaleString()}, then every month`
+      : "Workflow scheduled ✓";
     loadWorkflowsForSite(site_url);
   } catch (e) {
     statusEl.textContent = "Error: " + e.message;
@@ -1365,7 +1691,7 @@ async function loadWorkflowsForSite(site_url) {
     el.innerHTML = data.workflows.slice().reverse().map(w => `
       <div class="wf-row">
         <div>
-          <div>${w.email} &nbsp;·&nbsp; ${w.report_type === "dashboard_pdf" ? "Dashboard PDF" : "External Link"}</div>
+          <div>${w.email} &nbsp;·&nbsp; ${w.drive_link ? "Report link sent" : "No report link set"}${w.recurrence === "monthly" ? " &nbsp;·&nbsp; 🔁 Monthly" : ""}</div>
           <div style="color:var(--muted); font-size:12px;">
             ${w.status === "done" ? `Finished — sent ${w.reminder_count} reminder(s)` :
               w.status === "cancelled" ? "Cancelled" :

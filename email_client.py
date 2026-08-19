@@ -8,6 +8,7 @@ Setup (one-time, on your Google account that will send the reports):
 3. Add to your .env file (same folder as main.py):
      GMAIL_USER=yourname@gmail.com
      GMAIL_APP_PASSWORD=the16charapppassword   # no spaces
+     GMAIL_SENDER_NAME=Pixel Global IT — SEO Reports   # optional, shown as the "From" display name instead of the raw email
 
 Do NOT use your normal Gmail password here — App Passwords are the
 only thing Google allows for SMTP login now, and they can be revoked
@@ -18,12 +19,14 @@ import os
 import smtplib
 import ssl
 from email.message import EmailMessage
+from email.utils import formataddr
 from dotenv import load_dotenv
 
 load_dotenv()
 
 GMAIL_USER = os.getenv("GMAIL_USER")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+GMAIL_SENDER_NAME = os.getenv("GMAIL_SENDER_NAME", "Pixel Global IT — SEO Reports")
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465  # SSL
@@ -33,7 +36,9 @@ def send_report_email(to_email, subject, body_html, pdf_bytes=None, pdf_filename
     """Sends one email. Raises RuntimeError if Gmail creds aren't configured,
     or smtplib.SMTPException on send failure — caller decides how to handle it
     (the scheduler marks the workflow as 'error' and stops instead of retrying
-    forever)."""
+    forever). pdf_bytes is optional — the standard workflow email no longer
+    attaches a PDF (just the report link + login details), but this stays
+    supported for anywhere that still wants to attach one."""
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         raise RuntimeError(
             "GMAIL_USER / GMAIL_APP_PASSWORD not set. Add them to your .env file — "
@@ -41,7 +46,7 @@ def send_report_email(to_email, subject, body_html, pdf_bytes=None, pdf_filename
         )
 
     msg = EmailMessage()
-    msg["From"] = GMAIL_USER
+    msg["From"] = formataddr((GMAIL_SENDER_NAME, GMAIL_USER))
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.set_content("This email contains an HTML report. Please view it in an HTML-capable email client.")

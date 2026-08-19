@@ -31,10 +31,26 @@ def _save(data):
         json.dump(data, f, indent=2)
 
 
-def create_workflow(site_url, email, report_type, scheduled_time,
-                     ga4_property_id=None, drive_link=None):
-    """report_type: 'dashboard_pdf' or 'external_link'.
-    scheduled_time: ISO datetime string (e.g. '2026-08-10T09:00:00')."""
+def create_workflow(site_url, email, scheduled_time,
+                     ga4_property_id=None, drive_link=None, custom_message=None,
+                     recurrence="once", send_reminders=True,
+                     login_id=None, login_password=None):
+    """The email no longer attaches a PDF — it just contains the
+    client-facing report link (drive_link) plus, optionally, the client's
+    login_id / login_password so they can log into their dashboard
+    themselves. custom_message optionally replaces the default intro text.
+
+    recurrence: "once" (send, then done — or + reminders, see below) or
+    "monthly" (repeats automatically every month, same day-of-month +
+    time, until cancelled).
+    send_reminders: if False, skips the 3x/24h-apart reminder chain after
+    each send — useful for "monthly" so clients don't get nagged 4x a
+    month; if True (default), behaves like the original one-time flow.
+    scheduled_time: ISO datetime string (e.g. '2026-08-10T09:00:00').
+    login_id / login_password: optional — included in the email body as
+    "Your login details" if provided (plaintext password only exists here
+    because the admin typed it in when creating the client login; it is
+    never re-derived from the stored hash)."""
     data = _load()
     workflow_id = secrets.token_hex(6)
     data[workflow_id] = {
@@ -42,8 +58,12 @@ def create_workflow(site_url, email, report_type, scheduled_time,
         "site_url": site_url,
         "ga4_property_id": ga4_property_id,
         "email": email,
-        "report_type": report_type,
         "drive_link": drive_link,
+        "custom_message": custom_message,
+        "login_id": login_id,
+        "login_password": login_password,
+        "recurrence": recurrence if recurrence in ("once", "monthly") else "once",
+        "send_reminders": bool(send_reminders),
         "scheduled_time": scheduled_time,
         "status": "scheduled",       # scheduled -> sent -> ... -> done | cancelled | error
         "reminder_count": 0,         # how many of the 3 reminders have gone out
