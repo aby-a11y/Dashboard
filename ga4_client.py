@@ -14,16 +14,16 @@ from google.analytics.data_v1beta.types import (
 
 from gsc_client import get_credentials, default_date_range  # reuse shared auth + date helper
 
-_credentials = None
-
 
 def get_client():
     """Fresh GA4 client per call — same reasoning as gsc_client.get_service():
-    avoid sharing a connection across concurrent requests."""
-    global _credentials
-    if _credentials is None or not _credentials.valid:
-        _credentials = get_credentials()
-    return BetaAnalyticsDataClient(credentials=_credentials)
+    avoid sharing a connection across concurrent requests.
+    NOTE: no local credential caching here — gsc_client.get_credentials()
+    already caches per active account, and re-fetching from there (cheap,
+    just a dict lookup) means GA4 always follows whichever account is
+    currently switched on, instead of getting stuck on whichever account
+    happened to be active the first time this was called."""
+    return BetaAnalyticsDataClient(credentials=get_credentials())
 
 
 def _prop(property_id: str) -> str:
@@ -146,3 +146,20 @@ def get_top_pages(property_id, start_date=None, end_date=None, limit=15):
     ]
     rows.sort(key=lambda r: -r["views"])
     return rows
+def list_all_properties():
+    """Lists every GA4 property (name + numeric ID) across all Analytics
+    accounts the authenticated user has access to — one call."""
+    from google.analytics.admin_v1beta import AnalyticsAdminServiceClient
+
+    creds = get_credentials()
+    client = AnalyticsAdminServiceClient(credentials=creds)
+
+    results = []
+    for summary in client.list_account_summaries():
+        for prop in summary.property_summaries:
+            results.append({
+                "account_name": summary.display_name,
+                "property_name": prop.display_name,
+                "property_id": prop.property.split("/")[-1],
+            })
+    return results

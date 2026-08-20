@@ -7,7 +7,7 @@ Then open: http://127.0.0.1:8000
 """
 
 import datetime
-from fastapi import FastAPI, Query, HTTPException, Header, Depends
+from fastapi import FastAPI, Query, HTTPException, Header, Depends, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -495,6 +495,63 @@ def client_login_page():
     return FileResponse("static/client-login.html")
 
 
+# ---------------- Admin: switch which Google account GSC/GA4 calls use ----------------
+# Each Google account (my@gmail.com, clientjson@gmail.com, etc.) has its own
+# OAuth client_secret.json + token.json under accounts/<account_id>/.
+# Only one account is "active" at a time; every /api/sites, /api/summary,
+# /api/ga4/* etc. call below uses whichever account is currently active.
+
+@app.get("/api/admin/accounts")
+def api_list_accounts():
+    return {"accounts": gsc_client.list_accounts()}
+
+
+@app.post("/api/admin/accounts")
+def api_add_account(
+    account_id: str = Form(...),
+    label: str = Form(...),
+    client_secret_file: UploadFile = File(...),
+):
+    """Registers a new Google account. Upload the OAuth client_secret.json
+    you downloaded from Google Cloud Console for that account — it gets
+    saved to accounts/<account_id>/client_secret.json. The account isn't
+    logged in yet; switching to it (below) will trigger the OAuth consent
+    screen the first time it's actually used."""
+    try:
+        content = client_secret_file.file.read()
+        return gsc_client.add_account(account_id, label, content)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+
+
+@app.delete("/api/admin/accounts/{account_id}")
+def api_delete_account(account_id: str):
+    if not gsc_client.delete_account(account_id):
+        raise HTTPException(status_code=404, detail="No such account_id")
+    return {"status": "deleted", "account_id": account_id}
+
+
+class AccountSwitchBody(BaseModel):
+    account_id: str
+
+
+@app.post("/api/admin/accounts/switch")
+def api_switch_account(body: AccountSwitchBody):
+    try:
+        gsc_client.set_active_account(body.account_id)
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    # Touch the API right away so the switch either confirms working sites,
+    # or surfaces an auth problem immediately instead of on the next click.
+    sites = _call(gsc_client.list_sites)
+    return {"active_account": body.account_id, "sites": sites}
+
+
+@app.get("/api/admin/accounts/active")
+def api_active_account():
+    return {"active_account": gsc_client.get_active_account_id()}
+
+
 @app.get("/api/sites")
 def api_sites():
     return {"sites": _call(gsc_client.list_sites)}
@@ -756,3 +813,6 @@ def pdf_report(
             "Content-Disposition": "inline; filename=seo_report.pdf"
         }
     )
+@app.get("/api/ga4/list-properties")
+def api_ga4_list_properties():
+    return {"properties": _call(ga4_client.list_all_properties)}

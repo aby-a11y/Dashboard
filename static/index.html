@@ -180,6 +180,7 @@
   <h1>📊 SEO Client Dashboard</h1>
   <div class="controls">
     <button id="themeToggleBtn" class="more-menu-btn" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
+    <select id="accountSelect" title="Google account — which client_secret/token is used for GSC & GA4" style="max-width:170px;"><option>Loading accounts...</option></select>
     <select id="siteSelect"><option>Loading sites...</option></select>
     <select id="rangePreset">
       <option value="7">Last 7 days</option>
@@ -214,6 +215,10 @@
     <button class="more-menu-item" onclick="closeMoreMenu(); toggleClientAccessPanel();">
       <span class="mm-icon">👤</span>
       <span><span class="mm-label">Client Access</span><span class="mm-sub">Manage logins &amp; report links</span></span>
+    </button>
+    <button class="more-menu-item" onclick="closeMoreMenu(); toggleAccountsPanel();">
+      <span class="mm-icon">🔑</span>
+      <span><span class="mm-label">Google Accounts</span><span class="mm-sub">Add / manage GSC-GA4 secret JSONs</span></span>
     </button>
     <button class="more-menu-item" onclick="closeMoreMenu(); openWorkflowModal();">
       <span class="mm-icon">⏱️</span>
@@ -365,6 +370,25 @@
     </div>
     <div id="bulkResults" style="margin-top:10px; font-size:13px;"></div>
   </div>
+</div>
+
+<div id="accountsPanel" style="display:none; margin: 0 28px 24px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 20px; max-width:1300px; margin-left:auto; margin-right:auto;">
+  <div class="section-title">Google Accounts — GSC/GA4 secret JSON per account</div>
+  <div style="color:var(--muted); font-size:13px; margin-bottom:14px;">
+    Add a new Google account by uploading its OAuth <code>client_secret.json</code>.
+    Switching the dropdown in the header (top-left) changes which account's
+    sites/data every chart on this page uses.
+  </div>
+  <div style="display:grid; grid-template-columns: 1fr 1fr 2fr auto; gap:10px; margin-bottom:16px; align-items:center;">
+    <input type="text" id="acAccountId" placeholder="account_id (e.g. deyagmail)">
+    <input type="text" id="acLabel" placeholder="Label (e.g. deya@gmail.com)">
+    <input type="file" id="acClientSecretFile" accept="application/json">
+    <button onclick="addAccount()">Add Account</button>
+  </div>
+  <div style="display:flex; gap:10px; margin-bottom:16px;">
+    <span id="acStatus" style="color:var(--muted); font-size:13px; align-self:center;"></span>
+  </div>
+  <div id="accountListTable" class="loading">Loading accounts...</div>
 </div>
 
 <div id="clientAccessPanel" style="display:none; margin: 0 28px 24px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 20px; max-width:1300px; margin-left:auto; margin-right:auto;">
@@ -587,9 +611,7 @@ async function loadSites() {
 function applyGa4PropertyForSite() {
   const site = currentSite();
   const propInput = document.getElementById("ga4PropertyId");
-  if (siteGa4Map[site]) {
-    propInput.value = siteGa4Map[site];
-  }
+  propInput.value = siteGa4Map[site] || "";   // mapping na ho to box khaali kar do
 }
 
 async function loadSummary() {
@@ -1381,6 +1403,128 @@ async function saveReportLink() {
   }
 }
 
+// ---------------- Google Accounts panel (admin: switch/manage GSC+GA4 secret JSONs) ----------------
+
+function toggleAccountsPanel() {
+  const panel = document.getElementById("accountsPanel");
+  const showing = panel.style.display !== "none";
+  panel.style.display = showing ? "none" : "block";
+  if (!showing) loadAccountList();
+}
+
+async function loadAccounts() {
+  const sel = document.getElementById("accountSelect");
+  try {
+    const data = await fetchJSON(`${API}/api/admin/accounts`);
+    if (!data.accounts || data.accounts.length === 0) {
+      sel.innerHTML = `<option value="">No accounts yet</option>`;
+      return;
+    }
+    sel.innerHTML = data.accounts
+      .map(a => `<option value="${a.account_id}" ${a.active ? "selected" : ""}>${a.label}</option>`)
+      .join("");
+  } catch (e) {
+    sel.innerHTML = `<option>Error loading accounts</option>`;
+  }
+}
+
+async function switchAccount() {
+  const sel = document.getElementById("accountSelect");
+  const account_id = sel.value;
+  if (!account_id) return;
+  sel.disabled = true;
+  try {
+    const res = await fetch(`${API}/api/admin/accounts/switch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_id }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to switch account");
+    // Active account changed -> the site list (and everything downstream:
+    // summary, queries, GA4, etc.) belongs to a different Google login now.
+    await loadSites();
+    loadAll();
+  } catch (e) {
+    alert("Error switching account: " + e.message);
+    loadAccounts(); // reset dropdown back to whatever's actually active
+  } finally {
+    sel.disabled = false;
+  }
+}
+
+async function loadAccountList() {
+  const el = document.getElementById("accountListTable");
+  try {
+    const data = await fetchJSON(`${API}/api/admin/accounts`);
+    if (!data.accounts || data.accounts.length === 0) {
+      el.innerHTML = `<div class="loading">No Google accounts added yet.</div>`;
+      return;
+    }
+    el.innerHTML = `<table style="width:100%; border-collapse:collapse;">
+      <thead><tr style="text-align:left; color:var(--muted); font-size:12px;">
+        <th style="padding:6px;">Label</th><th style="padding:6px;">account_id</th>
+        <th style="padding:6px;">Status</th><th style="padding:6px;"></th>
+      </tr></thead>
+      <tbody>
+        ${data.accounts.map(a => `<tr style="border-top:1px solid var(--border);">
+          <td style="padding:6px;">${a.label}</td>
+          <td style="padding:6px; color:var(--muted); font-family:monospace;">${a.account_id}</td>
+          <td style="padding:6px;">${a.active ? '<span style="color:var(--accent);">● active</span>' : ''}</td>
+          <td style="padding:6px;"><a href="#" onclick="return deleteAccount('${a.account_id}')" style="color:#e05555;">Remove</a></td>
+        </tr>`).join("")}
+      </tbody>
+    </table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="error">Failed to load accounts: ${e.message}</div>`;
+  }
+}
+
+async function addAccount() {
+  const statusEl = document.getElementById("acStatus");
+  const account_id = document.getElementById("acAccountId").value.trim();
+  const label = document.getElementById("acLabel").value.trim();
+  const fileInput = document.getElementById("acClientSecretFile");
+  const file = fileInput.files[0];
+
+  if (!account_id || !label || !file) {
+    statusEl.textContent = "account_id, label, and client_secret.json file are all required.";
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("account_id", account_id);
+  formData.append("label", label);
+  formData.append("client_secret_file", file);
+
+  statusEl.textContent = "Uploading...";
+  try {
+    const res = await fetch(`${API}/api/admin/accounts`, { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to add account");
+    statusEl.textContent = `Added — ${data.label} (${data.account_id})`;
+    document.getElementById("acAccountId").value = "";
+    document.getElementById("acLabel").value = "";
+    fileInput.value = "";
+    loadAccountList();
+    loadAccounts();
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  }
+}
+
+async function deleteAccount(accountId) {
+  if (!confirm(`Remove account "${accountId}" from the registry? (Its client_secret.json/token.json stay on disk.)`)) return false;
+  try {
+    await fetch(`${API}/api/admin/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" });
+    loadAccountList();
+    loadAccounts();
+  } catch (e) {
+    alert("Error: " + e.message);
+  }
+  return false;
+}
+
 async function deleteClientAccess(clientId) {
   if (!confirm(`Remove login for "${clientId}"?`)) return;
   try {
@@ -1722,6 +1866,8 @@ async function cancelWorkflow(workflow_id) {
 }
 
 (async function init() {
+  await loadAccounts();
+  document.getElementById("accountSelect").addEventListener("change", switchAccount);
   await loadSites();
   document.getElementById("siteSelect").addEventListener("change", () => {
     applyGa4PropertyForSite();

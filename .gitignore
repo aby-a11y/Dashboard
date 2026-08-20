@@ -1,6 +1,9 @@
 client_secret.json
 site_secret.json
 token.json
+accounts/
+accounts.json
+active_account.txt
 venv
 site_ga4_map.json
 __pycache__

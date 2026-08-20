@@ -458,10 +458,30 @@ async function loadPages() {
 
 async function loadCountries() {
   const el = document.getElementById("countriesTable");
-  try {
-    const d = await fetchJSON(`${API}/api/client/countries?limit=20${dateParams()}`);
+    try {
+    const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
     const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
-    el.innerHTML = renderTable(rows, "country", "Country", "countriesTbl");
+    el.innerHTML = renderTable(rows, "country", "Country");
+    el.innerHTML = `
+  <table>
+    <thead>
+      <tr>
+        <th>Country</th>
+        <th class="num">Clicks</th>
+        <th class="num">Impr.</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(r => `
+        <tr>
+          <td title="${r.country}">${String(r.country).slice(0, 45)}</td>
+          <td class="num">${r.clicks}</td>
+          <td class="num">${r.impressions}</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  </table>
+`;
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
 

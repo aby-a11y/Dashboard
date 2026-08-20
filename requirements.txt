@@ -10,3 +10,5 @@ python-dotenv
 pyjwt
 apscheduler
 sqlalchemy
+python-multipart
+google.analytics-admin

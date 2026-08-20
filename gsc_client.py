@@ -1,9 +1,28 @@
 """
 Google Search Console client helper.
 Handles OAuth auth + all the data-fetching functions used by the dashboard API.
+
+---------------- Multi-account support ----------------
+Different clients' sites can live under different Google accounts (each
+verified in a separate GSC/GA4 login). Instead of one hardcoded
+client_secret.json/token.json, credentials are now organized per "account":
+
+    accounts/
+      <account_id>/
+        client_secret.json   <- OAuth client secret downloaded from Google Cloud Console
+        token.json           <- created automatically on first login for that account
+
+    accounts.json          {account_id: {"label": "my@gmail.com"}}
+    active_account.txt     just the account_id currently in use, e.g. "my_gmail"
+
+Only ONE account is "active" at a time — every GSC/GA4 call uses whichever
+account is active. Switch it via POST /api/admin/accounts/switch (see main.py).
+ga4_client.py reuses get_credentials() from here, so switching accounts here
+switches GA4 too.
 """
 
 import os
+import json
 import datetime
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -14,37 +33,145 @@ SCOPES = [
     "https://www.googleapis.com/auth/webmasters.readonly",
     "https://www.googleapis.com/auth/analytics.readonly",
 ]
-CLIENT_SECRET_FILE = "client_secret.json"
-TOKEN_FILE = "token.json"
 
-_credentials = None  # cached credentials (safe to share — this is just the token)
+ACCOUNTS_DIR = "accounts"
+ACCOUNTS_FILE = "accounts.json"          # {account_id: {"label": "my@gmail.com"}}
+ACTIVE_ACCOUNT_FILE = "active_account.txt"  # just the active account_id, e.g. "my_gmail"
 
+_credentials_cache = {}  # {account_id: Credentials} — keeps every account's token warm in memory
+
+
+# ---------------- account registry ----------------
+
+def _load_accounts():
+    if not os.path.exists(ACCOUNTS_FILE):
+        return {}
+    with open(ACCOUNTS_FILE, "r") as f:
+        return json.load(f)
+
+
+def _save_accounts(data):
+    with open(ACCOUNTS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _account_paths(account_id):
+    folder = os.path.join(ACCOUNTS_DIR, account_id)
+    return {
+        "folder": folder,
+        "client_secret": os.path.join(folder, "client_secret.json"),
+        "token": os.path.join(folder, "token.json"),
+    }
+
+
+def list_accounts():
+    """Returns [{account_id, label, active}] for the admin UI's switcher."""
+    accounts = _load_accounts()
+    active = get_active_account_id()
+    return [
+        {"account_id": aid, "label": rec.get("label", aid), "active": aid == active}
+        for aid, rec in accounts.items()
+    ]
+
+
+def add_account(account_id, label, client_secret_bytes):
+    """Registers a new account and writes its client_secret.json to
+    accounts/<account_id>/client_secret.json. Does NOT log in yet — the
+    first call that needs Google data (e.g. switching to it, then hitting
+    /api/sites) will trigger the OAuth flow and create token.json."""
+    account_id = account_id.strip()
+    if not account_id:
+        raise ValueError("account_id is required")
+
+    paths = _account_paths(account_id)
+    os.makedirs(paths["folder"], exist_ok=True)
+    with open(paths["client_secret"], "wb") as f:
+        f.write(client_secret_bytes)
+
+    accounts = _load_accounts()
+    accounts[account_id] = {"label": label or account_id}
+    _save_accounts(accounts)
+    return {"account_id": account_id, "label": accounts[account_id]["label"]}
+
+
+def delete_account(account_id):
+    accounts = _load_accounts()
+    if account_id not in accounts:
+        return False
+    del accounts[account_id]
+    _save_accounts(accounts)
+    _credentials_cache.pop(account_id, None)
+    # NOTE: intentionally not deleting accounts/<account_id>/ from disk —
+    # avoids accidentally nuking a token.json you'd need to re-auth from
+    # scratch. Remove the folder manually if you're sure.
+    return True
+
+
+def get_active_account_id():
+    if os.path.exists(ACTIVE_ACCOUNT_FILE):
+        with open(ACTIVE_ACCOUNT_FILE, "r") as f:
+            aid = f.read().strip()
+            if aid:
+                return aid
+    # Fallback: no active_account.txt yet — use the first registered account
+    accounts = _load_accounts()
+    if accounts:
+        return next(iter(accounts))
+    return None
+
+
+def set_active_account(account_id):
+    accounts = _load_accounts()
+    if account_id not in accounts:
+        raise ValueError(f"No such account_id: {account_id}")
+    with open(ACTIVE_ACCOUNT_FILE, "w") as f:
+        f.write(account_id)
+    return account_id
+
+
+# ---------------- credentials (per active account) ----------------
 
 def get_service():
     """Build a fresh API client + HTTP connection for every call.
     The underlying httplib2 connection is NOT safe to share across
     concurrent requests, so we deliberately do not cache the service."""
-    global _credentials
-    if _credentials is None or not _credentials.valid:
-        _credentials = get_credentials()
-    return build("searchconsole", "v1", credentials=_credentials, cache_discovery=False)
+    creds = get_credentials()
+    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 
 def get_credentials():
+    account_id = get_active_account_id()
+    if not account_id:
+        raise RuntimeError(
+            "No Google account configured yet — add one via POST /api/admin/accounts "
+            "(see accounts/ folder layout in gsc_client.py)."
+        )
+
+    creds = _credentials_cache.get(account_id)
+    if creds and creds.valid:
+        return creds
+
+    paths = _account_paths(account_id)
     creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    if os.path.exists(paths["token"]):
+        creds = Credentials.from_authorized_user_file(paths["token"], SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
+            if not os.path.exists(paths["client_secret"]):
+                raise RuntimeError(
+                    f"Missing {paths['client_secret']} — put that account's OAuth "
+                    f"client secret file there, then switch to it again."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], SCOPES)
             creds = flow.run_local_server(port=0, prompt="select_account")
 
-        with open(TOKEN_FILE, "w") as f:
+        with open(paths["token"], "w") as f:
             f.write(creds.to_json())
 
+    _credentials_cache[account_id] = creds
     return creds
 
 
