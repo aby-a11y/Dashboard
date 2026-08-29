@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Admin Login</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#1e2327;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+  .box{background:#fff;padding:32px;border-radius:8px;width:300px}
+  h2{margin-top:0}
+  input{width:100%;padding:10px;margin:6px 0;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
+  button{width:100%;padding:10px;background:#1e2327;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-top:8px}
+  #err{color:#c0392b;font-size:14px;min-height:18px}
+</style>
+</head>
+<body>
+<div class="box">
+  <h2>Admin Login</h2>
+  <input id="u" placeholder="Username" autocomplete="username">
+  <input id="p" type="password" placeholder="Password" autocomplete="current-password">
+  <div id="err"></div>
+  <button onclick="login()">Login</button>
+</div>
+<script>
+async function login(){
+  const u = document.getElementById('u').value;
+  const p = document.getElementById('p').value;
+  const err = document.getElementById('err');
+  err.textContent = '';
+  try{
+    const res = await fetch('/api/admin/login', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username:u, password:p})
+    });
+    if(!res.ok){
+      const d = await res.json().catch(()=>({}));
+      err.textContent = d.detail || 'Login failed';
+      return;
+    }
+    const data = await res.json();
+    localStorage.setItem('admin_token', data.token);
+    window.location.href = '/admin';
+  }catch(e){
+    err.textContent = 'Network error';
+  }
+}
+document.getElementById('p').addEventListener('keydown', e => { if(e.key==='Enter') login(); });
+</script>
+</body>
+</html>

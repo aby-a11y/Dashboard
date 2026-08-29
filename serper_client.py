@@ -73,35 +73,53 @@ def _extract_domain(url_or_domain):
 
 # ---------------- live Serper lookup ----------------
 
-def check_ranking(keyword, site_url, location=None, gl="us", num=100):
+def check_ranking(keyword, site_url, location=None, gl="us", max_pages=5):
     """Query Serper for `keyword` and find where `site_url` ranks in organic
-    results. Costs 1 Serper credit per call."""
+    results, checking up to `max_pages` pages (10 results per page = up to
+    50 results total). Stops early as soon as the site is found.
+
+    NOTE: this account's Serper plan does not honor the `num` param beyond
+    ~10 results — the only way to see past page 1 is Serper's `page` param,
+    which costs 1 credit per page fetched (so up to 5 credits per keyword
+    if the site isn't found in the top 50 at all — fewer if found earlier).
+    """
     if not SERPER_API_KEY:
         raise RuntimeError("SERPER_API_KEY not set — add it to your .env file as SERPER_API_KEY=your_key")
 
     domain = _extract_domain(site_url)
-    payload = {"q": keyword, "num": num, "gl": gl}
-    if location:
-        payload["location"] = location
 
-    resp = requests.post(
-        SERPER_URL,
-        headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
-        json=payload,
-        timeout=20,
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    for page in range(1, max_pages + 1):
+        payload = {"q": keyword, "gl": gl, "page": page}
+        if location:
+            payload["location"] = location
 
-    for result in data.get("organic", []):
-        result_domain = _extract_domain(result.get("link", ""))
-        if result_domain == domain or result_domain.endswith("." + domain):
-            return {
-                "keyword": keyword,
-                "position": result.get("position"),
-                "url": result.get("link"),
-                "found": True,
-            }
+        resp = requests.post(
+            SERPER_URL,
+            headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+            json=payload,
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        organic = data.get("organic", [])
+
+        if not organic:
+            # no more results — stop paging
+            break
+
+        for result in organic:
+            result_domain = _extract_domain(result.get("link", ""))
+            if result_domain == domain or result_domain.endswith("." + domain):
+                # Serper's own "position" field is per-page (1-10) on some
+                # plans — recompute the true overall position to be safe.
+                idx_in_page = organic.index(result)
+                true_position = (page - 1) * 10 + idx_in_page + 1
+                return {
+                    "keyword": keyword,
+                    "position": result.get("position") if page == 1 else true_position,
+                    "url": result.get("link"),
+                    "found": True,
+                }
 
     return {"keyword": keyword, "position": None, "url": None, "found": False}
 
@@ -109,7 +127,7 @@ def check_ranking(keyword, site_url, location=None, gl="us", num=100):
 def refresh_rankings(site_url, keywords, location=None, gl="us"):
     """Actually hits Serper for every keyword and overwrites the cache for
     this site. Call this only when the user explicitly asks to refresh —
-    each keyword = 1 paid API credit."""
+    each keyword = 1 to 5 paid API credits (stops early once found)."""
     cache = _load_json(CACHE_FILE)
     site_cache = cache.get(site_url, {})
     now = datetime.datetime.utcnow().isoformat() + "Z"

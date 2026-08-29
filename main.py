@@ -26,6 +26,7 @@ import workflow_store
 import scheduler as email_scheduler
 from pdf_report import generate_pdf
 from fastapi.responses import StreamingResponse
+import admin_auth
 
 app = FastAPI(title="SEO Client Dashboard API")
 
@@ -93,6 +94,19 @@ def get_client_site(authorization: Optional[str] = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="Invalid session token")
     return payload["site_url"]
 
+def get_current_admin(authorization: Optional[str] = Header(None)) -> str:
+    """Auth dependency for every /api/admin/* endpoint."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = admin_auth.decode_token(token)
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired, please log in again")
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid admin session")
+    return payload["sub"]
+    
 
 # ---------------- Client login + client-scoped data (site locked to their own) ----------------
 
@@ -113,6 +127,16 @@ def api_client_login(body: ClientLoginBody):
         "name": record.get("name"),
         "ga4_property_id": record.get("ga4_property_id"),
     }
+    
+class AdminLoginBody(BaseModel):
+    username: str
+    password: str
+    
+@app.post("/api/admin/login")
+def api_admin_login(body: AdminLoginBody):
+    if not admin_auth.authenticate(body.username, body.password):
+        raise HTTPException(status_code=401, detail="Invalid admin credentials")
+    return {"token": admin_auth.issue_token(body.username)}
 
 
 @app.get("/api/client/report-link")
@@ -490,7 +514,7 @@ def api_cancel_workflow(workflow_id: str):
     return {"status": "cancelled", "workflow_id": workflow_id}
 
 
-@app.get("/client-login")
+@app.get("/")
 def client_login_page():
     return FileResponse("static/client-login.html")
 
@@ -788,9 +812,13 @@ def api_ga4_pages(property_id: str, start_date: Optional[str] = None, end_date: 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-@app.get("/")
+@app.get("/admin")
 def serve_dashboard():
     return FileResponse("static/index.html")
+
+@app.get("/admin-login")
+def admin_login_page():
+    return FileResponse("static/admin-login.html")
 
 @app.get("/report/pdf")
 def pdf_report(
@@ -816,3 +844,7 @@ def pdf_report(
 @app.get("/api/ga4/list-properties")
 def api_ga4_list_properties():
     return {"properties": _call(ga4_client.list_all_properties)}
+
+@app.get("/client-login")
+def client_login_page():
+    return FileResponse("static/client-login.html")
