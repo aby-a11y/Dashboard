@@ -3,7 +3,7 @@ Google Analytics 4 (GA4) client helper.
 Reuses the same OAuth credentials as gsc_client (one token, two scopes).
 """
 
-import datetime
+from datetime import datetime, date, time, timedelta
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
     RunReportRequest,

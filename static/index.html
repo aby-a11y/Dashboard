@@ -171,6 +171,112 @@
   .more-menu-item .mm-icon { font-size: 17px; }
   .more-menu-item .mm-sub { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 400; }
   .more-menu-item .mm-label { font-weight: 600; }
+  .site-combo { position: relative; width: 220px; }
+.site-combo-input {
+  width: 100%;
+}
+.site-combo-list {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 50;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.site-combo-item {
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.site-combo-item:hover, .site-combo-item.active {
+  background: rgba(79,140,255,0.12);
+}
+.site-combo-empty {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+/* Email Workflow Rich Text Editor */
+
+.email-editor-wrapper {
+  width: 100%;
+}
+
+.email-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  flex-wrap: wrap;
+}
+
+.email-toolbar button {
+  min-width: 30px;
+  height: 28px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.email-toolbar button:hover {
+  background: rgba(79, 140, 255, 0.12);
+  opacity: 1;
+}
+
+.email-toolbar .toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 5px;
+}
+
+.email-editor {
+  width: 100%;
+  min-height: 120px;
+  max-height: 280px;
+  overflow-y: auto;
+
+  padding: 10px;
+
+  background: var(--card);
+  color: var(--text);
+
+  border: 1px solid var(--border);
+  border-top: none;
+
+  border-radius: 0 0 8px 8px;
+
+  outline: none;
+
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.email-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+}
+
+.email-editor:focus {
+  border-color: var(--accent);
+}
 </style>
 </head>
 <body>
@@ -181,7 +287,11 @@
   <div class="controls">
     <button id="themeToggleBtn" class="more-menu-btn" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
     <select id="accountSelect" title="Google account — which client_secret/token is used for GSC & GA4" style="max-width:170px;"><option>Loading accounts...</option></select>
-    <select id="siteSelect"><option>Loading sites...</option></select>
+    <div class="site-combo" id="siteCombo">
+  <input type="text" id="siteSearchInput" class="site-combo-input" placeholder="Search site..." autocomplete="off">
+  <div id="siteDropdownList" class="site-combo-list"></div>
+</div>
+<select id="siteSelect" style="display:none;"><option>Loading sites...</option></select>
     <select id="rangePreset">
       <option value="7">Last 7 days</option>
       <option value="28" selected>Last 28 days</option>
@@ -233,76 +343,232 @@
 
 <div id="workflowOverlay" class="workflow-overlay" style="display:none;" onclick="if(event.target===this) closeWorkflowModal()">
   <div class="workflow-modal">
+
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-      <div class="section-title" style="margin:0;">Email Workflow — <span id="wfSiteLabel" style="color:var(--accent);"></span></div>
-      <button onclick="closeWorkflowModal()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+      <div class="section-title" style="margin:0;">
+        Email Workflow —
+        <span id="wfSiteLabel" style="color:var(--accent);"></span>
+      </div>
+
+      <button onclick="closeWorkflowModal()" style="background:transparent; padding:4px 10px; font-size:16px;">
+        ✕
+      </button>
     </div>
 
     <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
-      <input type="email" id="wfEmail" placeholder="Client owner's email address">
 
+      <!-- EMAIL -->
+      <input
+        type="email"
+        id="wfEmail"
+        placeholder="Client owner's email address"
+      >
+
+      <!-- SUBJECT -->
       <div>
-        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Client-facing report link</label>
-        <input type="text" id="wfDriveLink" placeholder="Link to their report / dashboard login page" style="width:100%;">
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+          Email subject
+        </label>
+
+        <input
+          type="text"
+          id="wfSubject"
+          placeholder="Your latest SEO report is ready"
+          style="width:100%;"
+        >
       </div>
 
+      <!-- REPORT LINK -->
       <div>
-        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Custom email message (optional — leave blank to use the default message)</label>
-        <textarea id="wfCustomMessage" rows="4" placeholder="Hi, your latest SEO report is ready..." style="width:100%; resize:vertical; background:var(--card); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:8px 10px; font-family:inherit; font-size:13px;"></textarea>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+          Client-facing report link
+        </label>
+
+        <input
+          type="text"
+          id="wfDriveLink"
+          placeholder="Link to their report / dashboard login page"
+          style="width:100%;">
       </div>
 
+      <!-- RICH TEXT MESSAGE -->
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+          Custom email message
+        </label>
+
+        <div class="email-editor-wrapper">
+
+          <div class="email-toolbar">
+
+            <button type="button" title="Bold" onclick="formatEmail('bold')">
+              <b>B</b>
+            </button>
+
+            <button type="button" title="Italic" onclick="formatEmail('italic')">
+              <i>I</i>
+            </button>
+
+            <button type="button" title="Underline" onclick="formatEmail('underline')">
+              <u>U</u>
+            </button>
+
+            <span class="toolbar-divider"></span>
+
+            <button type="button" title="Bullet list" onclick="formatEmail('insertUnorderedList')">
+              • List
+            </button>
+
+            <button type="button" title="Numbered list" onclick="formatEmail('insertOrderedList')">
+              1. List
+            </button>
+
+          </div>
+
+          <div
+            id="wfCustomMessage"
+            class="email-editor"
+            contenteditable="true"
+            data-placeholder="Hi, your latest SEO report is ready..."
+          ></div>
+
+        </div>
+      </div>
+
+      <!-- LOGIN -->
       <div style="display:flex; gap:10px;">
+
         <div style="flex:1;">
-          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Login ID (optional)</label>
-          <input type="text" id="wfLoginId" placeholder="Client's login ID" style="width:100%;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+            Login ID (optional)
+          </label>
+
+          <input
+            type="text"
+            id="wfLoginId"
+            placeholder="Client's login ID"
+            style="width:100%;">
         </div>
+
         <div style="flex:1;">
-          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Login password (optional)</label>
-          <input type="text" id="wfLoginPassword" placeholder="Client's login password" style="width:100%;">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+            Login password (optional)
+          </label>
+
+          <input
+            type="text"
+            id="wfLoginPassword"
+            placeholder="Client's login password"
+            style="width:100%;">
         </div>
+
       </div>
 
+      <!-- OPTIONS -->
       <div style="display:flex; gap:16px; font-size:13px; color:var(--text);">
+
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-          <input type="checkbox" id="wfRecurMonthly" onchange="onWfRecurrenceChange()"> Repeat monthly
+          <input
+            type="checkbox"
+            id="wfRecurMonthly"
+            onchange="onWfRecurrenceChange()">
+          Repeat monthly
         </label>
+
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-          <input type="checkbox" id="wfSendReminders" checked> Send 3 follow-up reminders (24h apart)
+          <input
+            type="checkbox"
+            id="wfSendReminders"
+            checked>
+          Send 3 follow-up reminders (24h apart)
         </label>
+
       </div>
 
+      <!-- ONCE -->
       <div id="wfOnceSection">
-        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Send at</label>
-        <input type="datetime-local" id="wfScheduledTime" style="width:100%;">
+
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+          Send at
+        </label>
+
+        <input
+          type="datetime-local"
+          id="wfScheduledTime"
+          style="width:100%;">
+
       </div>
 
+      <!-- MONTHLY -->
       <div id="wfMonthlySection" style="display:none; gap:10px;">
+
         <div style="display:flex; gap:10px;">
+
           <div style="flex:1;">
-            <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Day of month (1–28)</label>
-            <input type="number" id="wfMonthlyDay" min="1" max="28" value="1" style="width:100%;">
+            <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+              Day of month (1–28)
+            </label>
+
+            <input
+              type="number"
+              id="wfMonthlyDay"
+              min="1"
+              max="28"
+              value="1"
+              style="width:100%;">
           </div>
+
           <div style="flex:1;">
-            <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Time</label>
-            <input type="time" id="wfMonthlyTime" value="09:00" style="width:100%;">
+            <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+              Time
+            </label>
+
+            <input
+              type="time"
+              id="wfMonthlyTime"
+              value="09:00"
+              style="width:100%;">
           </div>
+
         </div>
+
         <div style="color:var(--muted); font-size:12px; margin-top:6px;">
-          Sends on this date every month. If the date this month has already passed, the first send goes out next month.
+          Sends on this date every month. If the date this month has already passed,
+          the first send goes out next month.
         </div>
+
       </div>
 
+      <!-- START -->
       <div style="display:flex; gap:10px; align-items:center;">
-        <button onclick="startWorkflow()">Start Workflow</button>
-        <span id="wfStatus" style="color:var(--muted); font-size:13px;"></span>
+
+        <button onclick="startWorkflow()">
+          Start Workflow
+        </button>
+
+        <span
+          id="wfStatus"
+          style="color:var(--muted); font-size:13px;">
+        </span>
+
       </div>
+
       <div style="color:var(--muted); font-size:12px;">
-        The email contains the report link and login details above (no PDF attachment). "Repeat monthly" auto-schedules the next send one month later, same day &amp; time, until you cancel it.
+        The email contains the report link and login details above
+        (no PDF attachment). "Repeat monthly" auto-schedules the next
+        send one month later, same day &amp; time, until you cancel it.
       </div>
+
     </div>
 
-    <div class="section-title" style="font-size:13px;">Workflows for this site</div>
-    <div id="wfList" class="loading">Loading...</div>
+    <div class="section-title" style="font-size:13px;">
+      Workflows for this site
+    </div>
+
+    <div id="wfList" class="loading">
+      Loading...
+    </div>
+
   </div>
 </div>
 
@@ -592,13 +858,18 @@ function checkDatesOrShowError() {
 
 let siteGa4Map = {};
 
+let allSites = [];
+
 async function loadSites() {
   const sel = document.getElementById("siteSelect");
   try {
     const data = await fetchJSON(`${API}/api/sites`);
-    sel.innerHTML = data.sites.map(s => `<option value="${s}">${s}</option>`).join("");
+    allSites = data.sites;
+    sel.innerHTML = allSites.map(s => `<option value="${s}">${s}</option>`).join("");
+    document.getElementById("siteSearchInput").value = allSites[0] || "";
   } catch (e) {
     sel.innerHTML = `<option>Error loading sites</option>`;
+    document.getElementById("siteSearchInput").value = "Error loading sites";
   }
   try {
     siteGa4Map = await fetchJSON(`${API}/api/site-ga4-map`);
@@ -606,6 +877,34 @@ async function loadSites() {
     siteGa4Map = {};
   }
   applyGa4PropertyForSite();
+}
+
+function renderSiteDropdownList(filterText) {
+  const listEl = document.getElementById("siteDropdownList");
+  const filtered = allSites.filter(s => s.toLowerCase().includes((filterText || "").toLowerCase()));
+  if (!filtered.length) {
+    listEl.innerHTML = `<div class="site-combo-empty">No matches</div>`;
+    return;
+  }
+  listEl.innerHTML = filtered.map(s =>
+    `<div class="site-combo-item" data-site="${s}">${s}</div>`
+  ).join("");
+}
+
+function openSiteDropdown() {
+  renderSiteDropdownList(document.getElementById("siteSearchInput").value);
+  document.getElementById("siteDropdownList").style.display = "block";
+}
+
+function closeSiteDropdown() {
+  document.getElementById("siteDropdownList").style.display = "none";
+}
+
+function selectSite(value) {
+  document.getElementById("siteSelect").value = value;
+  document.getElementById("siteSearchInput").value = value;
+  closeSiteDropdown();
+  document.getElementById("siteSelect").dispatchEvent(new Event("change"));
 }
 
 function applyGa4PropertyForSite() {
@@ -1771,7 +2070,11 @@ async function startWorkflow() {
   const site_url = currentSiteUrl();
   const email = document.getElementById("wfEmail").value.trim();
   const drive_link = document.getElementById("wfDriveLink").value.trim();
-  const custom_message = document.getElementById("wfCustomMessage").value.trim();
+ const custom_message =
+  document.getElementById("wfCustomMessage").innerHTML.trim();
+
+const subject =
+  document.getElementById("wfSubject").value.trim();
   const login_id = document.getElementById("wfLoginId").value.trim();
   const login_password = document.getElementById("wfLoginPassword").value.trim();
   const ga4_property_id = document.getElementById("ga4PropertyId").value.trim() || undefined;
@@ -1815,6 +2118,12 @@ async function startWorkflow() {
   } catch (e) {
     statusEl.textContent = "Error: " + e.message;
   }
+}
+
+function formatEmail(command) {
+  const editor = document.getElementById("wfCustomMessage");
+  editor.focus();
+  document.execCommand(command, false, null);
 }
 
 function wfFormatTime(iso) {
@@ -1867,18 +2176,67 @@ async function cancelWorkflow(workflow_id) {
 
 (async function init() {
   await loadAccounts();
-  document.getElementById("accountSelect").addEventListener("change", switchAccount);
+
+  document.getElementById("accountSelect")
+    .addEventListener("change", switchAccount);
+
   await loadSites();
-  document.getElementById("siteSelect").addEventListener("change", () => {
-    applyGa4PropertyForSite();
-    loadAll();
+
+  // SITE SEARCH DROPDOWN
+  const siteInput = document.getElementById("siteSearchInput");
+  const siteList = document.getElementById("siteDropdownList");
+  const siteCombo = document.getElementById("siteCombo");
+
+  // Click/focus -> all sites show
+  siteInput.addEventListener("focus", () => {
+    renderSiteDropdownList("");
+    siteList.style.display = "block";
   });
-  document.getElementById("rangePreset").addEventListener("change", () => {
-    applyPresetToInputs();
-    loadAll();
+
+  siteInput.addEventListener("click", () => {
+    renderSiteDropdownList("");
+    siteList.style.display = "block";
   });
+
+  // Typing -> filter sites
+  siteInput.addEventListener("input", () => {
+    renderSiteDropdownList(siteInput.value);
+    siteList.style.display = "block";
+  });
+
+  // Select site
+  siteList.addEventListener("click", (event) => {
+    const item = event.target.closest(".site-combo-item");
+
+    if (!item) return;
+
+    selectSite(item.dataset.site);
+  });
+
+  // Click outside -> close
+  document.addEventListener("click", (event) => {
+    if (!siteCombo.contains(event.target)) {
+      closeSiteDropdown();
+    }
+  });
+
+  // Existing hidden select change
+  document.getElementById("siteSelect")
+    .addEventListener("change", () => {
+      applyGa4PropertyForSite();
+      loadAll();
+    });
+
+  // Date range
+  document.getElementById("rangePreset")
+    .addEventListener("change", () => {
+      applyPresetToInputs();
+      loadAll();
+    });
+
   applyPresetToInputs();
   loadAll();
+
 })();
 </script>
 </body>
