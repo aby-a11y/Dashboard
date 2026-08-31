@@ -22,6 +22,7 @@ import gsc_client
 import ga4_client
 import serper_client
 import client_auth
+import share_auth
 import workflow_store
 import scheduler as email_scheduler
 from pdf_report import generate_pdf
@@ -806,6 +807,99 @@ def api_ga4_pages(property_id: str, start_date: Optional[str] = None, end_date: 
     s, e = _dates(start_date, end_date)
     rows = _call(ga4_client.get_top_pages, property_id, s, e, limit)
     return {"property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
+
+
+# ---------------- Shareable, unauthenticated, self-expiring date-snapshot links ----------------
+# Admin mints a link for one site + one date; anyone with the link can open it,
+# no login required, and it stops working on its own once it expires (see share_auth.py).
+
+class ShareCreateBody(BaseModel):
+    site_url: str
+    date: str  # YYYY-MM-DD — the single day this link will show
+    ga4_property_id: Optional[str] = None
+    expires_in_hours: int = share_auth.DEFAULT_EXPIRY_HOURS
+
+
+@app.post("/api/admin/share/create")
+def api_admin_create_share(body: ShareCreateBody, _admin: str = Depends(get_current_admin)):
+    try:
+        datetime.date.fromisoformat(body.date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be in YYYY-MM-DD format")
+
+    result = share_auth.issue_share_token(
+        body.site_url, body.date, body.ga4_property_id, body.expires_in_hours
+    )
+    return {
+        "token": result["token"],
+        "share_url": f"/shared?token={result['token']}",
+        "expires_at": result["expires_at"],
+        "site_url": body.site_url,
+        "date": body.date,
+    }
+
+
+def get_share_context(token: str) -> dict:
+    """Auth dependency for every /api/shared/* endpoint. Resolves
+    site_url + date strictly from the signed token — a visitor can
+    never pass their own site_url/date to see something else."""
+    try:
+        payload = share_auth.decode_share_token(token)
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="This share link has expired")
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid share link")
+    return payload
+
+
+@app.get("/api/shared/summary")
+def api_shared_summary(ctx: dict = Depends(get_share_context)):
+    site_url, date = ctx["site_url"], ctx["date"]
+    data = _call(gsc_client.get_summary, site_url, date, date)
+    return {"site_url": site_url, "date": date, **data}
+
+
+@app.get("/api/shared/queries")
+def api_shared_queries(limit: int = Query(25, le=200), ctx: dict = Depends(get_share_context)):
+    site_url, date = ctx["site_url"], ctx["date"]
+    rows = _call(gsc_client.get_queries, site_url, date, date, limit)
+    return {"site_url": site_url, "date": date, "rows": rows}
+
+
+@app.get("/api/shared/pages")
+def api_shared_pages(limit: int = Query(25, le=200), ctx: dict = Depends(get_share_context)):
+    site_url, date = ctx["site_url"], ctx["date"]
+    rows = _call(gsc_client.get_pages, site_url, date, date, limit)
+    return {"site_url": site_url, "date": date, "rows": rows}
+
+
+@app.get("/api/shared/devices")
+def api_shared_devices(ctx: dict = Depends(get_share_context)):
+    site_url, date = ctx["site_url"], ctx["date"]
+    rows = _call(gsc_client.get_devices, site_url, date, date)
+    return {"site_url": site_url, "date": date, "rows": rows}
+
+
+@app.get("/api/shared/countries")
+def api_shared_countries(limit: int = Query(15, le=100), ctx: dict = Depends(get_share_context)):
+    site_url, date = ctx["site_url"], ctx["date"]
+    rows = _call(gsc_client.get_countries, site_url, date, date, limit)
+    return {"site_url": site_url, "date": date, "rows": rows}
+
+
+@app.get("/api/shared/ga4")
+def api_shared_ga4(ctx: dict = Depends(get_share_context)):
+    site_url, date = ctx["site_url"], ctx["date"]
+    property_id = ctx.get("ga4_property_id")
+    if not property_id:
+        return {"site_url": site_url, "date": date, "available": False}
+    data = _call(ga4_client.get_summary, property_id, date, date)
+    return {"site_url": site_url, "date": date, "available": True, **data}
+
+
+@app.get("/shared")
+def serve_shared_view():
+    return FileResponse("static/shared.html")
 
 
 # Serve the dashboard HTML + static assets last, so /api/* routes take priority

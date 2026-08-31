@@ -322,6 +322,10 @@
       <span class="mm-icon">🖥️</span>
       <span><span class="mm-label">Client Mode</span><span class="mm-sub">Open client-facing view</span></span>
     </button>
+    <button class="more-menu-item" onclick="closeMoreMenu(); openShareModal();">
+      <span class="mm-icon">🔗</span>
+      <span><span class="mm-label">Share Dashboard</span><span class="mm-sub">Unauthenticated link for one date, auto-expires</span></span>
+    </button>
     <button class="more-menu-item" onclick="closeMoreMenu(); toggleClientAccessPanel();">
       <span class="mm-icon">👤</span>
       <span><span class="mm-label">Client Access</span><span class="mm-sub">Manage logins &amp; report links</span></span>
@@ -338,6 +342,55 @@
       <span class="mm-icon">📅</span>
       <span><span class="mm-label">Bulk Monthly Schedule</span><span class="mm-sub">Auto-spread sends across clients &amp; days</span></span>
     </button>
+  </div>
+</div>
+
+<div id="shareOverlay" class="workflow-overlay" style="display:none;" onclick="if(event.target===this) closeShareModal()">
+  <div class="workflow-modal">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <div class="section-title" style="margin:0;">
+        Share Dashboard —
+        <span id="shareSiteLabel" style="color:var(--accent);"></span>
+      </div>
+      <button onclick="closeShareModal()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+    </div>
+
+    <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">
+      Generates a link that shows this site's dashboard for one specific date — anyone with the link can
+      open it without logging in, and it stops working automatically once it expires.
+    </p>
+
+    <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Date to share</label>
+        <input type="date" id="shareDate" style="width:100%;">
+      </div>
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Link expires in</label>
+        <select id="shareExpiry" style="width:100%;">
+          <option value="1">1 hour</option>
+          <option value="24" selected>24 hours</option>
+          <option value="72">3 days</option>
+          <option value="168">7 days</option>
+          <option value="720">30 days</option>
+        </select>
+      </div>
+    </div>
+
+    <button onclick="generateShareLink()" style="width:100%;">Generate Link</button>
+
+    <div id="shareResult" style="display:none; margin-top:16px;">
+      <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Shareable link</label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="shareLinkOutput" readonly style="flex:1;" onclick="this.select()">
+        <button onclick="copyShareLink()" id="shareCopyBtn" style="white-space:nowrap;">Copy</button>
+      </div>
+      <div id="shareExpiresNote" style="font-size:11px; color:var(--muted); margin-top:6px;"></div>
+    </div>
+
+    <div id="shareError" class="error" style="display:none; padding:10px 0 0; text-align:left;"></div>
+
   </div>
 </div>
 
@@ -1942,6 +1995,78 @@ async function openWorkflowModal() {
 
 function closeWorkflowModal() {
   document.getElementById("workflowOverlay").style.display = "none";
+}
+
+/* ---------------- Share Dashboard (unauthenticated, single-date, self-expiring link) ---------------- */
+
+function openShareModal() {
+  const site = currentSite();
+  if (!site) { alert("Pick a site first."); return; }
+
+  document.getElementById("shareSiteLabel").textContent = site;
+  document.getElementById("shareResult").style.display = "none";
+  document.getElementById("shareError").style.display = "none";
+  document.getElementById("shareLinkOutput").value = "";
+  document.getElementById("shareCopyBtn").textContent = "Copy";
+
+  // Default to the end of the current range (falls back to today if that's empty)
+  const endInput = document.getElementById("endDate").value;
+  document.getElementById("shareDate").value = endInput || new Date().toISOString().slice(0, 10);
+
+  document.getElementById("shareOverlay").style.display = "flex";
+}
+
+function closeShareModal() {
+  document.getElementById("shareOverlay").style.display = "none";
+}
+
+async function generateShareLink() {
+  const site = currentSite();
+  const date = document.getElementById("shareDate").value;
+  const expiresInHours = parseInt(document.getElementById("shareExpiry").value, 10);
+  const errBox = document.getElementById("shareError");
+  errBox.style.display = "none";
+
+  if (!date) {
+    errBox.textContent = "Pick a date first.";
+    errBox.style.display = "block";
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API}/api/admin/share/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        site_url: site,
+        date: date,
+        ga4_property_id: document.getElementById("ga4PropertyId").value || null,
+        expires_in_hours: expiresInHours,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Could not create the link");
+
+    const fullUrl = `${window.location.origin}${data.share_url}`;
+    document.getElementById("shareLinkOutput").value = fullUrl;
+    document.getElementById("shareResult").style.display = "block";
+
+    const expiresLabel = new Date(data.expires_at).toLocaleString();
+    document.getElementById("shareExpiresNote").textContent = `Expires ${expiresLabel} — after that the link stops working.`;
+  } catch (e) {
+    errBox.textContent = e.message;
+    errBox.style.display = "block";
+  }
+}
+
+function copyShareLink() {
+  const input = document.getElementById("shareLinkOutput");
+  input.select();
+  navigator.clipboard.writeText(input.value).then(() => {
+    const btn = document.getElementById("shareCopyBtn");
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+  }).catch(() => { /* clipboard permission denied — the input is still selected for manual copy */ });
 }
 
 /* ---------------- Bulk Monthly Schedule ---------------- */
