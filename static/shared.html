@@ -416,35 +416,171 @@ async function loadMovers() {
 
 /* ---- Keyword rank tracker (only shown if the site has tracked keywords) ---- */
 function renderRankTable(rows) {
-  if (!rows.length) return `<div class="empty">No keywords tracked for this site yet</div>`;
+  if (!rows.length) {
+    return `<div class="empty">No keywords tracked for this site yet</div>`;
+  }
+
+  const initialCount = 10;
+  const visibleRows = rows.slice(0, initialCount);
+  const hasMore = rows.length > initialCount;
+
+  function buildTable(data) {
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th>Keyword</th>
+            <th class="num">Position</th>
+            <th class="num">Prev.</th>
+            <th class="num">Change</th>
+            <th class="num">Clicks</th>
+            <th class="num">Impr.</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${data.map(r => `
+            <tr>
+              <td title="${r.keyword}">${r.keyword}</td>
+
+              <td class="num">
+                ${r.position !== null ? r.position : "not found"}
+              </td>
+
+              <td class="num">
+                ${r.previous_position !== null ? r.previous_position : "—"}
+              </td>
+
+              <td class="num" style="color:${
+                r.change === null
+                  ? 'var(--muted)'
+                  : (r.change < 0
+                      ? 'var(--accent2)'
+                      : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))
+              }">
+                ${
+                  r.change === null
+                    ? "—"
+                    : (r.change < 0
+                        ? "▲ "
+                        : (r.change > 0 ? "▼ " : "— "))
+                      + Math.abs(r.change)
+                }
+              </td>
+
+              <td class="num">${num(r.clicks)}</td>
+              <td class="num">${num(r.impressions)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
   return `
+    <div id="rankTableContent">
+      ${buildTable(visibleRows)}
+    </div>
+
+    ${
+      hasMore
+        ? `
+          <div style="text-align:center; margin-top:14px;">
+            <button
+              id="rankToggleBtn"
+              onclick="toggleRankRows()"
+              style="padding:8px 16px;"
+            >
+              Load More
+            </button>
+          </div>
+        `
+        : ""
+    }
+  `;
+}
+
+let rankTrackerRows = [];
+let rankTrackerExpanded = false;
+
+function toggleRankRows() {
+  const content = document.getElementById("rankTableContent");
+  const button = document.getElementById("rankToggleBtn");
+
+  if (!content || !button) return;
+
+  rankTrackerExpanded = !rankTrackerExpanded;
+
+  const rows = rankTrackerExpanded
+    ? rankTrackerRows
+    : rankTrackerRows.slice(0, 10);
+
+  content.innerHTML = `
     <table>
-      <thead><tr>
-        <th>Keyword</th><th class="num">Position</th><th class="num">Prev.</th>
-        <th class="num">Change</th><th class="num">Clicks</th><th class="num">Impr.</th>
-      </tr></thead>
+      <thead>
+        <tr>
+          <th>Keyword</th>
+          <th class="num">Position</th>
+          <th class="num">Prev.</th>
+          <th class="num">Change</th>
+          <th class="num">Clicks</th>
+          <th class="num">Impr.</th>
+        </tr>
+      </thead>
+
       <tbody>
         ${rows.map(r => `
           <tr>
             <td title="${r.keyword}">${r.keyword}</td>
-            <td class="num">${r.position !== null ? r.position : "not found"}</td>
-            <td class="num">${r.previous_position !== null ? r.previous_position : "—"}</td>
-            <td class="num" style="color:${r.change === null ? 'var(--muted)' : (r.change < 0 ? 'var(--accent2)' : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))}">
-              ${r.change === null ? "—" : (r.change < 0 ? "▲ " : (r.change > 0 ? "▼ " : "— ")) + Math.abs(r.change)}
+
+            <td class="num">
+              ${r.position !== null ? r.position : "not found"}
             </td>
+
+            <td class="num">
+              ${r.previous_position !== null ? r.previous_position : "—"}
+            </td>
+
+            <td class="num" style="color:${
+              r.change === null
+                ? 'var(--muted)'
+                : (r.change < 0
+                    ? 'var(--accent2)'
+                    : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))
+            }">
+              ${
+                r.change === null
+                  ? "—"
+                  : (r.change < 0
+                      ? "▲ "
+                      : (r.change > 0 ? "▼ " : "— "))
+                    + Math.abs(r.change)
+              }
+            </td>
+
             <td class="num">${num(r.clicks)}</td>
             <td class="num">${num(r.impressions)}</td>
-          </tr>`).join("")}
+          </tr>
+        `).join("")}
       </tbody>
-    </table>`;
+    </table>
+  `;
+
+  button.textContent = rankTrackerExpanded
+    ? "Show Less"
+    : "Load More";
 }
 
 async function loadRankTracker() {
   try {
     const d = await fetchShared("rank-tracker");
     if (!d.rows.length) return; // no keywords tracked for this site — leave the card hidden
-    document.getElementById("rankTrackerCard").style.display = "block";
-    document.getElementById("rankTrackerTable").innerHTML = renderRankTable(d.rows);
+        document.getElementById("rankTrackerCard").style.display = "block";
+        rankTrackerRows = d.rows;
+    rankTrackerExpanded = false;
+
+    document.getElementById("rankTrackerTable").innerHTML =
+      renderRankTable(d.rows);
   } catch (e) {
     document.getElementById("rankTrackerCard").style.display = "block";
     document.getElementById("rankTrackerTable").innerHTML = `<div class="error">${e.message}</div>`;

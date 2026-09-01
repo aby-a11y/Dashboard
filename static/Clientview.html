@@ -412,11 +412,37 @@ function tbodyWithLoadMore(tableId, rows, rowHtmlFn, pageSize = 5) {
 }
 function loadMoreLink(tableId, count) {
   if (!count) return "";
-  return `<div style="text-align:center; margin-top:8px;">
-    <a href="#" onclick="document.getElementById('${tableId}_more').style.display='table-row-group'; this.parentElement.style.display='none'; return false;" style="color:var(--accent); font-size:13px; cursor:pointer;">Load ${count} more ▾</a>
-  </div>`;
-}
 
+  return `
+    <div id="${tableId}_controls" style="text-align:center; margin-top:8px;">
+      
+      <a href="#"
+         onclick="
+           document.getElementById('${tableId}_more').style.display='table-row-group';
+           document.getElementById('${tableId}_loadmore').style.display='none';
+           document.getElementById('${tableId}_showless').style.display='inline';
+           return false;
+         "
+         id="${tableId}_loadmore"
+         style="color:var(--accent); font-size:13px; cursor:pointer;">
+         Load ${count} more ▾
+      </a>
+
+      <a href="#"
+         onclick="
+           document.getElementById('${tableId}_more').style.display='none';
+           document.getElementById('${tableId}_loadmore').style.display='inline';
+           document.getElementById('${tableId}_showless').style.display='none';
+           return false;
+         "
+         id="${tableId}_showless"
+         style="display:none; color:var(--accent); font-size:13px; cursor:pointer;">
+         Show Less ▴
+      </a>
+
+    </div>
+  `;
+}
 function renderTable(rows, keyName, keyLabel, tableId) {
   if (!rows.length) return `<div class="loading">No data for this range</div>`;
   tableId = tableId || ("tbl_" + keyName);
