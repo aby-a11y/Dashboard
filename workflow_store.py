@@ -34,11 +34,20 @@ def _save(data):
 def create_workflow(site_url, email, scheduled_time,
                      ga4_property_id=None, drive_link=None, custom_message=None,
                      recurrence="once", send_reminders=True,
-                     login_id=None, login_password=None):
-    """The email no longer attaches a PDF — it just contains the
-    client-facing report link (drive_link) plus, optionally, the client's
-    login_id / login_password so they can log into their dashboard
-    themselves. custom_message optionally replaces the default intro text.
+                     login_id=None, login_password=None,
+                     report_start_date=None, report_end_date=None):
+    """The email contains either an auto-generated, no-login shareable
+    dashboard link (when report_start_date/report_end_date are set —
+    scheduler.py mints a fresh one at send time, see share_auth.py) or
+    the manually-pasted drive_link as a fallback, plus, optionally, the
+    client's login_id / login_password so they can log into their
+    dashboard themselves. custom_message optionally replaces the
+    default intro text.
+
+    report_start_date / report_end_date: "YYYY-MM-DD" — the data range
+    the emailed share link will show. For recurrence="monthly", this
+    span (in days) rolls forward by one month on every future send,
+    same as scheduled_time does (see scheduler.py's _run_workflow_step).
 
     recurrence: "once" (send, then done — or + reminders, see below) or
     "monthly" (repeats automatically every month, same day-of-month +
@@ -59,6 +68,8 @@ def create_workflow(site_url, email, scheduled_time,
         "ga4_property_id": ga4_property_id,
         "email": email,
         "drive_link": drive_link,
+        "report_start_date": report_start_date,
+        "report_end_date": report_end_date,
         "custom_message": custom_message,
         "login_id": login_id,
         "login_password": login_password,

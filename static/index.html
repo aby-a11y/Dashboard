@@ -362,9 +362,19 @@
     </p>
 
     <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
-      <div>
-        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Date to share</label>
+            <div>
+        <label id="shareDateLabel" style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Date to share</label>
         <input type="date" id="shareDate" style="width:100%;">
+      </div>
+      <div>
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text); cursor:pointer;">
+          <input type="checkbox" id="shareIsRange" onchange="toggleShareRange()">
+          Share a date range instead
+        </label>
+      </div>
+      <div id="shareEndDateWrap" style="display:none;">
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">End date</label>
+        <input type="date" id="shareEndDate" style="width:100%;">
       </div>
       <div>
         <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Link expires in</label>
@@ -434,14 +444,28 @@
       <!-- REPORT LINK -->
       <div>
         <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
-          Client-facing report link
+          Full dashboard / login page link (optional)
         </label>
 
         <input
           type="text"
           id="wfDriveLink"
-          placeholder="Link to their report / dashboard login page"
+          placeholder="Sent alongside the share link below, if both are set"
           style="width:100%;">
+      </div>
+
+      <!-- REPORT PERIOD (auto-generates the shareable link used in the email) -->
+      <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">
+          Report period — data the emailed link will show (leave blank to use the link above instead)
+        </label>
+        <div style="display:flex; gap:10px;">
+          <input type="date" id="wfReportStart" style="flex:1;" title="Report start date">
+          <input type="date" id="wfReportEnd" style="flex:1;" title="Report end date">
+        </div>
+        <div style="color:var(--muted); font-size:11px; margin-top:4px;">
+          If set, the email also links to a no-login-required snapshot for exactly this date range, alongside the report link above.
+        </div>
       </div>
 
       <!-- RICH TEXT MESSAGE -->
@@ -457,6 +481,7 @@
             <button type="button" title="Bold" onclick="formatEmail('bold')">
               <b>B</b>
             </button>
+
 
             <button type="button" title="Italic" onclick="formatEmail('italic')">
               <i>I</i>
@@ -658,6 +683,19 @@
       </div>
 
       <div>
+        <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Report period — data the emailed link will show</label>
+        <div style="display:flex; gap:10px;">
+          <input type="date" id="bulkReportStart" style="flex:1;" title="Report start date">
+          <input type="date" id="bulkReportEnd" style="flex:1;" title="Report end date">
+        </div>
+        <div style="color:var(--muted); font-size:11px; margin-top:4px;">
+          E.g. the full previous month. Each client's email gets a no-login-required link for exactly this range.
+          For "Repeat monthly", this same span (in days) rolls forward by one month on every future send automatically.
+          Leave blank to fall back to each client's saved report link instead.
+        </div>
+      </div>
+
+      <div>
         <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Custom email message (optional — leave blank to use the default message)</label>
         <textarea id="bulkCustomMessage" rows="3" placeholder="Hi, your latest SEO report is ready..." style="width:100%; resize:vertical; background:var(--card); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:8px 10px; font-family:inherit; font-size:13px;"></textarea>
       </div>
@@ -826,6 +864,16 @@
 
 <script>
 const API = "";
+
+// FastAPI validation errors (422) come back as an array of {loc, msg, ...}
+// objects, not a string — this turns that into readable text instead of
+// letting it render as "[object Object],[object Object]".
+function parseApiError(data, fallback) {
+  if (Array.isArray(data && data.detail)) {
+    return data.detail.map(d => d.msg || JSON.stringify(d)).join("; ");
+  }
+  return (data && data.detail) || fallback;
+}
 let trendChart, deviceChart;
 
 function chartColors() {
@@ -1962,6 +2010,8 @@ async function openWorkflowModal() {
   document.getElementById("wfSiteLabel").textContent = site;
   document.getElementById("wfStatus").textContent = "";
   document.getElementById("wfDriveLink").value = "";
+  document.getElementById("wfReportStart").value = "";
+  document.getElementById("wfReportEnd").value = "";
   document.getElementById("wfCustomMessage").value = "";
   document.getElementById("wfLoginId").value = "";
   document.getElementById("wfLoginPassword").value = "";
@@ -2012,8 +2062,17 @@ function openShareModal() {
   // Default to the end of the current range (falls back to today if that's empty)
   const endInput = document.getElementById("endDate").value;
   document.getElementById("shareDate").value = endInput || new Date().toISOString().slice(0, 10);
+  document.getElementById("shareDate").value = endInput || new Date().toISOString().slice(0, 10);
+  document.getElementById("shareIsRange").checked = false;
+  document.getElementById("shareEndDateWrap").style.display = "none";
+  document.getElementById("shareDateLabel").textContent = "Date to share";
 
   document.getElementById("shareOverlay").style.display = "flex";
+}
+function toggleShareRange() {
+  const isRange = document.getElementById("shareIsRange").checked;
+  document.getElementById("shareEndDateWrap").style.display = isRange ? "block" : "none";
+  document.getElementById("shareDateLabel").textContent = isRange ? "Start date" : "Date to share";
 }
 
 function closeShareModal() {
@@ -2023,12 +2082,24 @@ function closeShareModal() {
 async function generateShareLink() {
   const site = currentSite();
   const date = document.getElementById("shareDate").value;
+  const isRange = document.getElementById("shareIsRange").checked;
+  const endDate = isRange ? document.getElementById("shareEndDate").value : date;
   const expiresInHours = parseInt(document.getElementById("shareExpiry").value, 10);
   const errBox = document.getElementById("shareError");
   errBox.style.display = "none";
 
   if (!date) {
     errBox.textContent = "Pick a date first.";
+    errBox.style.display = "block";
+    return;
+  }
+    if (isRange && !endDate) {
+    errBox.textContent = "Pick an end date.";
+    errBox.style.display = "block";
+    return;
+  }
+  if (isRange && endDate < date) {
+    errBox.textContent = "End date must be after start date.";
     errBox.style.display = "block";
     return;
   }
@@ -2039,13 +2110,14 @@ async function generateShareLink() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         site_url: site,
-        date: date,
+        start_date: date,
+        end_date: endDate,
         ga4_property_id: document.getElementById("ga4PropertyId").value || null,
         expires_in_hours: expiresInHours,
       }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || "Could not create the link");
+    if (!res.ok) throw new Error(parseApiError(data, "Could not create the link"));
 
     const fullUrl = `${window.location.origin}${data.share_url}`;
     document.getElementById("shareLinkOutput").value = fullUrl;
@@ -2081,6 +2153,8 @@ async function openBulkModal() {
   document.getElementById("bulkBatchSize").value = 25;
   document.getElementById("bulkGapMinutes").value = 15;
   document.getElementById("bulkStartHour").value = 9;
+  document.getElementById("bulkReportStart").value = "";
+  document.getElementById("bulkReportEnd").value = "";
 
   // default start date = tomorrow
   const tomorrow = new Date(Date.now() + 24 * 60 * 60000);
@@ -2132,6 +2206,12 @@ async function startBulkWorkflow() {
   const custom_message = document.getElementById("bulkCustomMessage").value.trim();
   const recurrence = document.getElementById("bulkRecurMonthly").checked ? "monthly" : "once";
   const send_reminders = document.getElementById("bulkSendReminders").checked;
+  const report_start_date = document.getElementById("bulkReportStart").value || undefined;
+  const report_end_date = document.getElementById("bulkReportEnd").value || undefined;
+  if ((report_start_date && !report_end_date) || (!report_start_date && report_end_date)) {
+    statusEl.textContent = "Set both a report start date and end date, or leave both blank.";
+    return;
+  }
 
   statusEl.textContent = `Scheduling ${siteUrls.length} clients...`;
   try {
@@ -2142,11 +2222,12 @@ async function startBulkWorkflow() {
         items: siteUrls.map(site_url => ({ site_url })),
         start_date, start_hour, daily_batch_size, minutes_between_sends,
         recurrence, send_reminders,
+        report_start_date, report_end_date,
         custom_message: custom_message || undefined,
       }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Failed to schedule");
+    if (!res.ok) throw new Error(parseApiError(data, "Failed to schedule"));
 
     statusEl.textContent = `Done — ${data.created.length} scheduled across ${data.total_days} day(s)${data.skipped.length ? `, ${data.skipped.length} skipped` : ""}.`;
 
@@ -2195,6 +2276,8 @@ async function startWorkflow() {
   const site_url = currentSiteUrl();
   const email = document.getElementById("wfEmail").value.trim();
   const drive_link = document.getElementById("wfDriveLink").value.trim();
+  const report_start_date = document.getElementById("wfReportStart").value || undefined;
+  const report_end_date = document.getElementById("wfReportEnd").value || undefined;
  const custom_message =
   document.getElementById("wfCustomMessage").innerHTML.trim();
 
@@ -2207,6 +2290,10 @@ const subject =
   const send_reminders = document.getElementById("wfSendReminders").checked;
 
   if (!email) { statusEl.textContent = "Enter the client's email address."; return; }
+  if ((report_start_date && !report_end_date) || (!report_start_date && report_end_date)) {
+    statusEl.textContent = "Set both a report start date and end date, or leave both blank.";
+    return;
+  }
 
   let scheduled_time;
   if (recurrence === "monthly") {
@@ -2228,6 +2315,7 @@ const subject =
       body: JSON.stringify({
         site_url, email, scheduled_time, ga4_property_id,
         drive_link: drive_link || undefined,
+        report_start_date, report_end_date,
         custom_message: custom_message || undefined,
         login_id: login_id || undefined,
         login_password: login_password || undefined,
@@ -2235,7 +2323,7 @@ const subject =
       }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Failed to start workflow");
+    if (!res.ok) throw new Error(parseApiError(data, "Failed to start workflow"));
     statusEl.textContent = recurrence === "monthly"
       ? `Scheduled ✓ — first send ${new Date(scheduled_time).toLocaleString()}, then every month`
       : "Workflow scheduled ✓";

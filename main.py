@@ -383,7 +383,9 @@ class WorkflowCreateBody(BaseModel):
     email: str
     scheduled_time: str  # ISO datetime, e.g. "2026-08-10T09:00:00"
     ga4_property_id: Optional[str] = None
-    drive_link: Optional[str] = None       # the client-facing report link included in the email
+    drive_link: Optional[str] = None       # fallback link — only used if no report period is set below
+    report_start_date: Optional[str] = None  # YYYY-MM-DD — data range the emailed share link will show
+    report_end_date: Optional[str] = None    # YYYY-MM-DD
     custom_message: Optional[str] = None   # optional — replaces the default email intro text
     login_id: Optional[str] = None         # optional — included in the email as "Login ID"
     login_password: Optional[str] = None   # optional — included in the email as "Password"
@@ -404,6 +406,16 @@ def api_create_workflow(body: WorkflowCreateBody):
         run_date = datetime.datetime.fromisoformat(body.scheduled_time)
     except ValueError:
         raise HTTPException(status_code=400, detail="scheduled_time must be an ISO datetime, e.g. 2026-08-10T09:00:00")
+    if bool(body.report_start_date) != bool(body.report_end_date):
+        raise HTTPException(status_code=400, detail="Set both report_start_date and report_end_date, or neither")
+    if body.report_start_date:
+        try:
+            rs = datetime.date.fromisoformat(body.report_start_date)
+            re_ = datetime.date.fromisoformat(body.report_end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="report_start_date/report_end_date must be YYYY-MM-DD")
+        if rs > re_:
+            raise HTTPException(status_code=400, detail="report_start_date must be before report_end_date")
 
     # remember the owner email + report link against this site for next time
     client_auth.set_report_email(body.site_url, body.email)
@@ -414,6 +426,7 @@ def api_create_workflow(body: WorkflowCreateBody):
         site_url=body.site_url, email=body.email,
         scheduled_time=body.scheduled_time, ga4_property_id=body.ga4_property_id,
         drive_link=body.drive_link, custom_message=body.custom_message,
+        report_start_date=body.report_start_date, report_end_date=body.report_end_date,
         login_id=body.login_id, login_password=body.login_password,
         recurrence=body.recurrence, send_reminders=body.send_reminders,
     )
@@ -444,6 +457,8 @@ class BulkWorkflowCreateBody(BaseModel):
     minutes_between_sends: int = 15    # stagger between individual sends within a day
     recurrence: str = "monthly"        # "once" | "monthly"
     send_reminders: bool = False       # off by default for bulk/monthly — avoids extra nagging
+    report_start_date: Optional[str] = None  # YYYY-MM-DD — data range every emailed share link will show
+    report_end_date: Optional[str] = None    # YYYY-MM-DD — for "monthly", this span rolls forward a month each cycle
     custom_message: Optional[str] = None
 
 
@@ -462,6 +477,16 @@ def api_bulk_create_workflow(body: BulkWorkflowCreateBody):
         start_date = datetime.date.fromisoformat(body.start_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
+    if bool(body.report_start_date) != bool(body.report_end_date):
+        raise HTTPException(status_code=400, detail="Set both report_start_date and report_end_date, or neither")
+    if body.report_start_date:
+        try:
+            rs = datetime.date.fromisoformat(body.report_start_date)
+            re_ = datetime.date.fromisoformat(body.report_end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="report_start_date/report_end_date must be YYYY-MM-DD")
+        if rs > re_:
+            raise HTTPException(status_code=400, detail="report_start_date must be before report_end_date")
 
     created, skipped = [], []
     for i, item in enumerate(body.items):
@@ -488,6 +513,7 @@ def api_bulk_create_workflow(body: BulkWorkflowCreateBody):
             ga4_property_id=item.ga4_property_id, drive_link=drive_link,
             custom_message=body.custom_message, recurrence=body.recurrence,
             send_reminders=body.send_reminders,
+            report_start_date=body.report_start_date, report_end_date=body.report_end_date,
             login_id=item.login_id, login_password=item.login_password,
         )
         email_scheduler.schedule_workflow(wf["workflow_id"], send_dt)
@@ -809,13 +835,15 @@ def api_ga4_pages(property_id: str, start_date: Optional[str] = None, end_date: 
     return {"property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
 
 
-# ---------------- Shareable, unauthenticated, self-expiring date-snapshot links ----------------
-# Admin mints a link for one site + one date; anyone with the link can open it,
-# no login required, and it stops working on its own once it expires (see share_auth.py).
+# ---------------- Shareable, unauthenticated, self-expiring date-range snapshots ----------------
+# Admin (or the email workflow scheduler) mints a link for one site + one date
+# range; anyone with the link can open it, no login required, and it stops
+# working on its own once it expires (see share_auth.py).
 
 class ShareCreateBody(BaseModel):
     site_url: str
-    date: str  # YYYY-MM-DD — the single day this link will show
+    start_date: str  # YYYY-MM-DD
+    end_date: str     # YYYY-MM-DD — same as start_date to share a single day
     ga4_property_id: Optional[str] = None
     expires_in_hours: int = share_auth.DEFAULT_EXPIRY_HOURS
 
@@ -823,26 +851,31 @@ class ShareCreateBody(BaseModel):
 @app.post("/api/admin/share/create")
 def api_admin_create_share(body: ShareCreateBody, _admin: str = Depends(get_current_admin)):
     try:
-        datetime.date.fromisoformat(body.date)
+        s = datetime.date.fromisoformat(body.start_date)
+        e = datetime.date.fromisoformat(body.end_date)
     except ValueError:
-        raise HTTPException(status_code=400, detail="date must be in YYYY-MM-DD format")
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
+    if s > e:
+        raise HTTPException(status_code=400, detail="Start date must be before end date")
 
     result = share_auth.issue_share_token(
-        body.site_url, body.date, body.ga4_property_id, body.expires_in_hours
+        body.site_url, body.start_date, body.end_date, body.ga4_property_id, body.expires_in_hours
     )
     return {
         "token": result["token"],
         "share_url": f"/shared?token={result['token']}",
         "expires_at": result["expires_at"],
         "site_url": body.site_url,
-        "date": body.date,
+        "start_date": body.start_date,
+        "end_date": body.end_date,
     }
 
 
 def get_share_context(token: str) -> dict:
     """Auth dependency for every /api/shared/* endpoint. Resolves
-    site_url + date strictly from the signed token — a visitor can
-    never pass their own site_url/date to see something else."""
+    site_url + the date range strictly from the signed token — a
+    visitor can never pass their own site_url/dates to see something
+    else, and there's nothing to log into."""
     try:
         payload = share_auth.decode_share_token(token)
     except pyjwt.ExpiredSignatureError:
@@ -854,47 +887,108 @@ def get_share_context(token: str) -> dict:
 
 @app.get("/api/shared/summary")
 def api_shared_summary(ctx: dict = Depends(get_share_context)):
-    site_url, date = ctx["site_url"], ctx["date"]
-    data = _call(gsc_client.get_summary, site_url, date, date)
-    return {"site_url": site_url, "date": date, **data}
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    data = _call(gsc_client.get_summary, site_url, s, e)
+    comparison = None
+    try:
+        comparison = _call(gsc_client.get_comparison, site_url, s, e)
+    except HTTPException:
+        pass
+    return {"site_url": site_url, "start_date": s, "end_date": e, "comparison": comparison, **data}
+
+
+@app.get("/api/shared/trend")
+def api_shared_trend(ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    rows = _call(gsc_client.get_trend, site_url, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/shared/queries")
 def api_shared_queries(limit: int = Query(25, le=200), ctx: dict = Depends(get_share_context)):
-    site_url, date = ctx["site_url"], ctx["date"]
-    rows = _call(gsc_client.get_queries, site_url, date, date, limit)
-    return {"site_url": site_url, "date": date, "rows": rows}
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    rows = _call(gsc_client.get_queries, site_url, s, e, limit)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/shared/pages")
 def api_shared_pages(limit: int = Query(25, le=200), ctx: dict = Depends(get_share_context)):
-    site_url, date = ctx["site_url"], ctx["date"]
-    rows = _call(gsc_client.get_pages, site_url, date, date, limit)
-    return {"site_url": site_url, "date": date, "rows": rows}
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    rows = _call(gsc_client.get_pages, site_url, s, e, limit)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/shared/devices")
 def api_shared_devices(ctx: dict = Depends(get_share_context)):
-    site_url, date = ctx["site_url"], ctx["date"]
-    rows = _call(gsc_client.get_devices, site_url, date, date)
-    return {"site_url": site_url, "date": date, "rows": rows}
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    rows = _call(gsc_client.get_devices, site_url, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/shared/countries")
 def api_shared_countries(limit: int = Query(15, le=100), ctx: dict = Depends(get_share_context)):
-    site_url, date = ctx["site_url"], ctx["date"]
-    rows = _call(gsc_client.get_countries, site_url, date, date, limit)
-    return {"site_url": site_url, "date": date, "rows": rows}
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    rows = _call(gsc_client.get_countries, site_url, s, e, limit)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
-@app.get("/api/shared/ga4")
-def api_shared_ga4(ctx: dict = Depends(get_share_context)):
-    site_url, date = ctx["site_url"], ctx["date"]
+@app.get("/api/shared/movers")
+def api_shared_movers(limit: int = Query(10, le=50), ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    return _call(gsc_client.get_movers, site_url, s, e, limit)
+
+
+@app.get("/api/shared/ga4/summary")
+def api_shared_ga4_summary(ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
     property_id = ctx.get("ga4_property_id")
     if not property_id:
-        return {"site_url": site_url, "date": date, "available": False}
-    data = _call(ga4_client.get_summary, property_id, date, date)
-    return {"site_url": site_url, "date": date, "available": True, **data}
+        return {"site_url": site_url, "available": False}
+    data = _call(ga4_client.get_summary, property_id, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "available": True, **data}
+
+
+@app.get("/api/shared/ga4/trend")
+def api_shared_ga4_trend(ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    property_id = ctx.get("ga4_property_id")
+    if not property_id:
+        return {"site_url": site_url, "rows": []}
+    rows = _call(ga4_client.get_trend, property_id, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/shared/ga4/traffic")
+def api_shared_ga4_traffic(ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    property_id = ctx.get("ga4_property_id")
+    if not property_id:
+        return {"site_url": site_url, "rows": []}
+    rows = _call(ga4_client.get_traffic_sources, property_id, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/shared/ga4/pages")
+def api_shared_ga4_pages(limit: int = Query(15, le=200), ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    property_id = ctx.get("ga4_property_id")
+    if not property_id:
+        return {"site_url": site_url, "rows": []}
+    rows = _call(ga4_client.get_top_pages, property_id, s, e, limit)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/shared/rank-tracker")
+def api_shared_rank_tracker(ctx: dict = Depends(get_share_context)):
+    """Read-only, same as /api/client/rank-tracker — the SEO team manages
+    which keywords are tracked from the admin dashboard, the shared
+    snapshot just shows where they stood over this exact date range."""
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    keywords = gsc_client.get_tracked_keywords(site_url)
+    if not keywords:
+        return {"site_url": site_url, "start_date": s, "end_date": e, "rows": []}
+    rows = _call(gsc_client.get_rank_tracker_summary, site_url, keywords, s, e)
+    return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/shared")

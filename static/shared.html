@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SEO Client Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>SEO Dashboard — Shared Report</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   :root {
@@ -41,25 +43,21 @@
   }
   header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  select, input {
-    background: var(--card);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 10px;
-    border-radius: 8px;
-    font-size: 13px;
+  .badge {
+    font-size: 12px; color: var(--muted); background: var(--card);
+    border: 1px solid var(--border); padding: 8px 14px; border-radius: 20px;
   }
   button {
-    background: var(--accent);
-    border: none;
-    color: white;
-    padding: 8px 16px;
-    border-radius: 8px;
-    font-size: 13px;
-    cursor: pointer;
+    background: transparent; border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
   }
-  button:hover { opacity: 0.9; }
+  button:hover { opacity: 0.85; }
   main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
+  h2.section-heading {
+    font-size: 15px; color: var(--muted); margin: 30px 0 10px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  h2.section-heading:first-child { margin-top: 0; }
   .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -67,139 +65,126 @@
     margin-bottom: 24px;
   }
   .stat-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px 18px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px;
   }
   .stat-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+  .stat-card .value { font-size: 26px; font-weight: 700; margin-top: 6px; }
   .chart-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px;
-    margin-bottom: 24px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px; margin-bottom: 24px;
   }
-  .grid-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    align-items: start;
-  }
+  .section-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  th.num { text-align: right; }
-  .section-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
-  .loading, .error { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
-  .error { color: #ff6b6b; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   tr:hover { background: rgba(255,255,255,0.02); }
+  .loading, .error, .empty { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
+  .error { color: #ff6b6b; }
   .donut-wrap { position: relative; height: 220px; }
+  #expiredScreen {
+    display: none; min-height: 70vh; align-items: center; justify-content: center;
+    flex-direction: column; text-align: center; padding: 40px 20px; gap: 10px;
+  }
+  #expiredScreen .icon { font-size: 40px; }
+  #expiredScreen h2 { margin: 0; font-size: 18px; }
+  #expiredScreen p { color: var(--muted); font-size: 13px; max-width: 380px; margin: 0; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px 28px 32px; }
 </style>
 </head>
 <body>
 <script>document.body.classList.toggle('light', localStorage.getItem('dashboardTheme') === 'light');</script>
 
-<header>
-  <h1>📊 <span id="siteLabel">SEO Dashboard</span></h1>
-  <div class="controls">
-    <button id="themeToggleBtn" style="background:transparent; border:1px solid var(--border); color:var(--text);" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
-    <select id="rangePreset">
-      <option value="7">Last 7 days</option>
-      <option value="28" selected>Last 28 days</option>
-      <option value="90">Last 3 months</option>
-      <option value="180">Last 6 months</option>
-      <option value="365">Last 12 months</option>
-      <option value="480">Max available (~16 months)</option>
-      <option value="custom">Custom range</option>
-    </select>
-    <input type="date" id="startDate" style="display:none">
-    <input type="date" id="endDate" style="display:none">
-    <button onclick="loadAll()">Refresh</button>
-<button id="downloadPdfBtn" onclick="generatePdf()">
-    Generate PDF Report
-</button>
-    <button id="moreInfoBtn" style="background:var(--accent2); display:none;" onclick="openMoreInfo()">📁 Get Full Report</button>
-    <button style="background:transparent; border:1px solid var(--border); color:var(--muted);" onclick="logout()">Log Out</button>
-  </div>
-</header>
+<div id="expiredScreen">
+  <div class="icon">🔒</div>
+  <h2 id="expiredTitle">This link is no longer available</h2>
+  <p id="expiredMsg">Ask whoever sent this link to generate a new one.</p>
+</div>
 
-<main>
-  <h2 style="font-size:15px; color:var(--muted); margin: 30px 0 10px; text-transform:uppercase; letter-spacing:0.05em;">Google Analytics</h2>
-  <div class="summary-grid" id="ga4SummaryGrid">
-    <div class="loading">Loading GA4 summary... (enter a Property ID above)</div>
-  </div>
-
-  <div class="grid-2">
-    <div class="chart-card">
-      <div class="section-title">Active Users & Sessions Trend</div>
-      <canvas id="ga4TrendChart" height="140"></canvas>
+<div id="app" style="display:none;">
+  <header>
+    <h1>📊 <span id="siteLabel">SEO Dashboard</span></h1>
+    <div class="controls">
+      <button id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
+      <span class="badge" id="rangeBadge"></span>
     </div>
-    <div class="chart-card">
-      <div class="section-title">Traffic Sources</div>
-      <div class="donut-wrap"><canvas id="ga4TrafficChart"></canvas></div>
+  </header>
+
+  <main>
+    <h2 class="section-heading" id="ga4Heading" style="display:none;">Google Analytics</h2>
+    <div class="summary-grid" id="ga4SummaryGrid" style="display:none;"></div>
+    <div class="grid-2" id="ga4ChartsRow" style="display:none;">
+      <div class="chart-card">
+        <div class="section-title">Active Users &amp; Sessions Trend</div>
+        <canvas id="ga4TrendChart" height="140"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="section-title">Traffic Sources</div>
+        <div class="donut-wrap"><canvas id="ga4TrafficChart"></canvas></div>
+      </div>
     </div>
-  </div>
-  
-  <div class="chart-card">
-    <div class="section-title">Top Pages (GA4)</div>
-    <div id="ga4PagesTable" class="loading">Loading...</div>
-  </div>
+    <div class="chart-card" id="ga4PagesCard" style="display:none;">
+      <div class="section-title">Top Pages (GA4)</div>
+      <div id="ga4PagesTable" class="loading">Loading…</div>
+    </div>
 
+    <h2 class="section-heading">Google Search Console</h2>
+    <div class="summary-grid" id="summaryGrid"><div class="loading">Loading…</div></div>
 
-
-  <h2 style="font-size:15px; color:var(--muted); margin: 30px 0 10px; text-transform:uppercase; letter-spacing:0.05em;">Google Search Console</h2>
-
-  <div class="summary-grid" id="summaryGrid">
-    <div class="loading">Loading summary...</div>
-  </div>
-
-  <div class="chart-card">
-    <div class="section-title">Clicks & Impressions Trend</div>
-    <canvas id="trendChart" height="80"></canvas>
-  </div>
+    <div class="chart-card">
+      <div class="section-title">Clicks &amp; Impressions Trend</div>
+      <canvas id="trendChart" height="80"></canvas>
+    </div>
 
     <div class="grid-2">
-    <div class="chart-card">
-      <div class="section-title">Top Queries <a href="#" onclick="return exportCsv('queries')" style="float:right; font-size:12px; color:var(--accent);">Export CSV</a></div>
-      <div id="queriesTable" class="loading">Loading...</div>
+      <div class="chart-card">
+        <div class="section-title">Top Queries</div>
+        <div id="queriesTable" class="loading">Loading…</div>
+      </div>
+      <div class="chart-card">
+        <div class="section-title">Top Pages</div>
+        <div id="pagesTable" class="loading">Loading…</div>
+      </div>
     </div>
-    <div class="chart-card">
-      <div class="section-title">Top Pages <a href="#" onclick="return exportCsv('pages')" style="float:right; font-size:12px; color:var(--accent);">Export CSV</a></div>
-      <div id="pagesTable" class="loading">Loading...</div>
+
+    <div class="grid-2">
+      <div class="chart-card">
+        <div class="section-title">Devices (Clicks)</div>
+        <div class="donut-wrap"><canvas id="deviceChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="section-title">Top Countries</div>
+        <div id="countriesTable" class="loading">Loading…</div>
+      </div>
     </div>
-  </div>
 
-  <div class="grid-2">
-    <div class="chart-card">
-      <div class="section-title">Devices (Clicks)</div>
-      <div class="donut-wrap"><canvas id="deviceChart"></canvas></div>
+    <div class="grid-2">
+      <div class="chart-card">
+        <div class="section-title" style="color:var(--accent2);">📈 Gainers</div>
+        <div id="gainersTable" class="loading">Loading…</div>
+      </div>
+      <div class="chart-card">
+        <div class="section-title" style="color:#ff6b6b;">📉 Losers</div>
+        <div id="losersTable" class="loading">Loading…</div>
+      </div>
     </div>
-    <div class="chart-card">
-      <div class="section-title">Top Countries <a href="#" onclick="return exportCsv('countries')" style="float:right; font-size:12px; color:var(--accent);">Export CSV</a></div>
-      <div id="countriesTable" class="loading">Loading...</div>
+
+    <div class="chart-card" id="rankTrackerCard" style="display:none;">
+      <div class="section-title">🔍 Keyword Rank Tracker</div>
+      <div id="rankTrackerTable" class="loading">Loading…</div>
     </div>
-  </div>
+  </main>
 
-  
-
-  <div class="chart-card" id="rankHistoryCard" style="display:none;">
-    <div class="section-title" id="rankHistoryTitle">Position History</div>
-    <canvas id="rankHistoryChart" height="80"></canvas>
-  </div>
-
-  <div class="chart-card">
-    <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span></div>
-    <div id="serperRankTable" class="loading">Loading...</div>
-  </div>
-</main>
+  <footer>This is a read-only report for a fixed date range — it stops working once the link expires.</footer>
+</div>
 
 <script>
-const API = "";
-let trendChart, deviceChart;
+const params = new URLSearchParams(window.location.search);
+const token = params.get("token");
+let trendChart, deviceChart, ga4TrendChart, ga4TrafficChart;
 
 function chartColors() {
   const cs = getComputedStyle(document.body);
@@ -207,180 +192,113 @@ function chartColors() {
     text: cs.getPropertyValue('--text').trim() || '#e6e8eb',
     muted: cs.getPropertyValue('--muted').trim() || '#9099a6',
     border: cs.getPropertyValue('--border').trim() || '#262a33',
-    card: cs.getPropertyValue('--card').trim() || '#171a21',
   };
 }
 
-// ---- auth guard: bounce to login if there's no session token ----
-const CLIENT_TOKEN = localStorage.getItem("client_token");
-const CLIENT_SITE_URL = localStorage.getItem("client_site_url");
-const CLIENT_NAME = localStorage.getItem("client_name");
-const CLIENT_GA4_PROPERTY_ID = localStorage.getItem("client_ga4_property_id") || "";
-
-if (!CLIENT_TOKEN || !CLIENT_SITE_URL) {
-  window.location.href = "/client-login";
+function showExpired(message) {
+  document.getElementById("app").style.display = "none";
+  document.getElementById("expiredScreen").style.display = "flex";
+  if (message) document.getElementById("expiredMsg").textContent = message;
 }
 
-function logout() {
-  localStorage.removeItem("client_token");
-  localStorage.removeItem("client_site_url");
-  localStorage.removeItem("client_name");
-  localStorage.removeItem("client_ga4_property_id");
-  window.location.href = "/client-login";
-}
-
-async function fetchJSON(url, retries = 2) {
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    let res;
-    try {
-      res = await fetch(url, { headers: { "Authorization": `Bearer ${CLIENT_TOKEN}` } });
-    } catch (networkErr) {
-      if (attempt === retries) throw networkErr;
-      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
-      continue;
-    }
-    if (res.status === 401) {
-      logout();
-      return new Promise(() => {}); // navigation is happening, stop here
-    }
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      if (res.status >= 400 && res.status < 500) {
-        throw new Error(body.detail || res.statusText);
-      }
-      if (attempt === retries) throw new Error(body.detail || res.statusText);
-      await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
-      continue;
-    }
-    return res.json();
+async function fetchShared(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`/api/shared/${path}${sep}token=${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.detail || res.statusText);
+    err.status = res.status;
+    throw err;
   }
+  return res.json();
 }
 
-function currentSite() {
-  return CLIENT_SITE_URL;
+/* ---- formatting helpers ---- */
+const num = v => (v == null ? "—" : Number(v).toLocaleString());
+const pct = v => (v == null ? "—" : Number(v).toFixed(1) + "%"); // gsc_client already returns ctr as a 0-100 percentage
+const pos = v => (v == null ? "—" : Number(v).toFixed(1));
+
+function donutLegend() {
+  const c = chartColors();
+  return {
+    position: "bottom",
+    labels: {
+      color: c.text, font: { size: 12, weight: "600" }, boxWidth: 10, padding: 12,
+      generateLabels: chart => {
+        const ds = chart.data.datasets[0];
+        return chart.data.labels.map((label, i) => ({
+          text: `${label}  ${ds.data[i]}`, fillStyle: ds.backgroundColor[i],
+          strokeStyle: ds.backgroundColor[i], fontColor: c.text, color: c.text, hidden: false, index: i,
+        }));
+      },
+    },
+  };
 }
 
-async function openMoreInfo() {
-  try {
-    const d = await fetchJSON(`${API}/api/client/report-link`);
-    if (d.drive_link) {
-      window.open(d.drive_link, "_blank");
-    } else {
-      alert("Report link is not set up yet for your site — please check back soon.");
-    }
-  } catch (e) {
-    alert("Could not open report link: " + e.message);
-  }
-}
-function computePresetRange(days) {
-  const end = new Date();
-  end.setDate(end.getDate() - 3);
-  const start = new Date(end);
-  start.setDate(start.getDate() - days);
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  return { start: fmt(start), end: fmt(end) };
+function renderTable(containerId, rows, columns, emptyMsg = "No data for this range") {
+  const el = document.getElementById(containerId);
+  if (!rows || !rows.length) { el.innerHTML = `<div class="empty">${emptyMsg}</div>`; return; }
+  const head = columns.map(c => `<th class="${c.num ? 'num' : ''}">${c.label}</th>`).join("");
+  const body = rows.map(r => `<tr>${columns.map(c =>
+    `<td class="${c.num ? 'num' : ''}" ${c.title ? `title="${r[c.key]}"` : ''}>${c.fmt ? c.fmt(r[c.key]) : (r[c.key] ?? "")}</td>`
+  ).join("")}</tr>`).join("");
+  el.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-function applyPresetToInputs() {
-  const preset = document.getElementById("rangePreset").value;
-  const startInput = document.getElementById("startDate");
-  const endInput = document.getElementById("endDate");
-
-  if (preset === "custom") {
-    startInput.style.display = "inline-block";
-    endInput.style.display = "inline-block";
-    return;
-  }
-
-  startInput.style.display = "none";
-  endInput.style.display = "none";
-  const { start, end } = computePresetRange(parseInt(preset, 10));
-  startInput.value = start;
-  endInput.value = end;
-}
-
-function dateParams() {
-  const s = document.getElementById("startDate").value;
-  const eVal = document.getElementById("endDate").value;
-  if (!s || !eVal) return "";
-  if (s > eVal) return "INVALID";
-  return `&start_date=${s}&end_date=${eVal}`;
-}
-
-function checkDatesOrShowError() {
-  const params = dateParams();
-  if (params === "INVALID") {
-    document.getElementById("summaryGrid").innerHTML =
-      `<div class="error">Start date must be before end date</div>`;
-    return false;
-  }
-  return true;
-}
-
-function initClientView() {
-  document.getElementById("siteLabel").textContent = CLIENT_NAME ? CLIENT_NAME : CLIENT_SITE_URL;
-  document.getElementById("moreInfoBtn").style.display = "inline-block";
-  if (!CLIENT_GA4_PROPERTY_ID) {
-    document.getElementById("ga4SummaryGrid").innerHTML =
-      `<div class="loading">GA4 not configured for this site yet.</div>`;
-  }
-}
-
+/* ---- GSC: summary + comparison ---- */
 async function loadSummary() {
   const el = document.getElementById("summaryGrid");
   try {
-    const [summary, comparison] = await Promise.all([
-      fetchJSON(`${API}/api/client/summary?${dateParams().replace(/^&/, "")}`),
-      fetchJSON(`${API}/api/client/comparison?${dateParams().replace(/^&/, "")}`).catch(() => null),
-    ]);
-    const d = summary;
-    const chg = comparison ? comparison.change : {};
+    const d = await fetchShared("summary");
+    document.getElementById("siteLabel").textContent = d.site_url;
+    document.getElementById("rangeBadge").textContent =
+      d.start_date === d.end_date ? d.start_date : `${d.start_date} → ${d.end_date}`;
 
-    const arrow = (pct, invert = false) => {
-      if (pct === null || pct === undefined) return "";
-      const good = invert ? pct < 0 : pct > 0;
-      const color = pct === 0 ? "var(--muted)" : (good ? "var(--accent2)" : "#ff6b6b");
-      const sign = pct > 0 ? "+" : "";
-      const symbol = pct > 0 ? "▲" : (pct < 0 ? "▼" : "—");
-      return `<span style="color:${color}; font-size:12px; margin-left:6px;">${symbol} ${sign}${pct}%</span>`;
+    const chg = (d.comparison && d.comparison.change) || {};
+    const arrow = (v, invert = false) => {
+      if (v === null || v === undefined) return "";
+      const good = invert ? v < 0 : v > 0;
+      const color = v === 0 ? "var(--muted)" : (good ? "var(--accent2)" : "#ff6b6b");
+      const symbol = v > 0 ? "▲" : (v < 0 ? "▼" : "—");
+      return `<span style="color:${color}; font-size:12px; margin-left:6px;">${symbol} ${v > 0 ? "+" : ""}${v}%</span>`;
     };
-    const posArrow = (delta) => {
+    const posArrow = delta => {
       if (delta === null || delta === undefined) return "";
       const good = delta < 0;
       const color = delta === 0 ? "var(--muted)" : (good ? "var(--accent2)" : "#ff6b6b");
-      const sign = delta > 0 ? "+" : "";
       const symbol = delta > 0 ? "▼" : (delta < 0 ? "▲" : "—");
-      return `<span style="color:${color}; font-size:12px; margin-left:6px;">${symbol} ${sign}${delta}</span>`;
+      return `<span style="color:${color}; font-size:12px; margin-left:6px;">${symbol} ${delta > 0 ? "+" : ""}${delta}</span>`;
     };
 
     el.innerHTML = `
-      <div class="stat-card"><div class="label">Clicks</div><div class="value">${d.clicks}${arrow(chg.clicks_pct)}</div></div>
-      <div class="stat-card"><div class="label">Impressions</div><div class="value">${d.impressions}${arrow(chg.impressions_pct)}</div></div>
-      <div class="stat-card"><div class="label">Avg CTR</div><div class="value">${d.ctr}%${arrow(chg.ctr_pct)}</div></div>
-      <div class="stat-card"><div class="label">Avg Position</div><div class="value">${d.position}${posArrow(chg.position_change)}</div></div>
+      <div class="stat-card"><div class="label">Clicks</div><div class="value">${num(d.clicks)}${arrow(chg.clicks_pct)}</div></div>
+      <div class="stat-card"><div class="label">Impressions</div><div class="value">${num(d.impressions)}${arrow(chg.impressions_pct)}</div></div>
+      <div class="stat-card"><div class="label">Avg. CTR</div><div class="value">${pct(d.ctr)}${arrow(chg.ctr_pct)}</div></div>
+      <div class="stat-card"><div class="label">Avg. Position</div><div class="value">${pos(d.position)}${posArrow(chg.position_change)}</div></div>
     `;
-  } catch (e) {
-    el.innerHTML = `<div class="error">${e.message}</div>`;
+    return true;
+  } catch (err) {
+    if (err.status === 401) { showExpired(err.message); return false; }
+    el.innerHTML = `<div class="error">${err.message}</div>`;
+    return true;
   }
 }
 
+/* ---- GSC: trend chart ---- */
 async function loadTrend() {
   const ctx = document.getElementById("trendChart");
   try {
-    const d = await fetchJSON(`${API}/api/client/trend?${dateParams().replace(/^&/, "")}`);
-    const labels = d.rows.map(r => r.date);
-    const clicks = d.rows.map(r => r.clicks);
-    const impressions = d.rows.map(r => r.impressions);
+    const d = await fetchShared("trend");
     if (trendChart) trendChart.destroy();
     const c = chartColors();
     trendChart = new Chart(ctx, {
       type: "line",
       data: {
-        labels,
+        labels: d.rows.map(r => r.date),
         datasets: [
-          { label: "Clicks", data: clicks, borderColor: "#4f8cff", tension: 0.3, yAxisID: "y" },
-          { label: "Impressions", data: impressions, borderColor: "#33c17a", tension: 0.3, yAxisID: "y1" },
-        ]
+          { label: "Clicks", data: d.rows.map(r => r.clicks), borderColor: "#4f8cff", tension: 0.3, yAxisID: "y" },
+          { label: "Impressions", data: d.rows.map(r => r.impressions), borderColor: "#33c17a", tension: 0.3, yAxisID: "y1" },
+        ],
       },
       options: {
         responsive: true,
@@ -390,306 +308,115 @@ async function loadTrend() {
           y1: { position: "right", ticks: { color: c.muted }, grid: { display: false } },
           x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: c.text } } }
-      }
+        plugins: { legend: { labels: { color: c.text } } },
+      },
     });
-  } catch (e) {
-    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
-  }
+  } catch (e) { ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`; }
 }
 
-/* Shared "top 5, then Load more" helper for any data table. Renders the
-   first `pageSize` rows in a visible <tbody>, the rest in a hidden one;
-   loadMoreLink() reveals the rest with a click, no re-fetch needed. */
-function tbodyWithLoadMore(tableId, rows, rowHtmlFn, pageSize = 5) {
-  const visible = rows.slice(0, pageSize);
-  const rest = rows.slice(pageSize);
-  let html = `<tbody>${visible.map(rowHtmlFn).join("")}</tbody>`;
-  if (rest.length) {
-    html += `<tbody id="${tableId}_more" style="display:none;">${rest.map(rowHtmlFn).join("")}</tbody>`;
-  }
-  return { html, moreCount: rest.length };
-}
-function loadMoreLink(tableId, count) {
-  if (!count) return "";
-  return `<div style="text-align:center; margin-top:8px;">
-    <a href="#" onclick="document.getElementById('${tableId}_more').style.display='table-row-group'; this.parentElement.style.display='none'; return false;" style="color:var(--accent); font-size:13px; cursor:pointer;">Load ${count} more ▾</a>
-  </div>`;
-}
-
-function renderTable(rows, keyName, keyLabel, tableId) {
-  if (!rows.length) return `<div class="loading">No data for this range</div>`;
-  tableId = tableId || ("tbl_" + keyName);
-  const rowHtml = r => `
-          <tr>
-            <td title="${r[keyName]}">${String(r[keyName]).slice(0, 45)}</td>
-            <td class="num">${r.clicks}</td>
-            <td class="num">${r.impressions}</td>
-            <td class="num">${r.ctr}%</td>
-            <td class="num">${r.position}</td>
-          </tr>`;
-  const { html: bodyHtml, moreCount } = tbodyWithLoadMore(tableId, rows, rowHtml);
-  return `
-    <table>
-      <thead><tr>
-        <th>${keyLabel}</th><th class="num">Clicks</th><th class="num">Impr.</th>
-        <th class="num">CTR</th><th class="num">Pos.</th>
-      </tr></thead>
-      ${bodyHtml}
-    </table>
-    ${loadMoreLink(tableId, moreCount)}`;
-}
-
+/* ---- GSC: queries / pages ---- */
 async function loadQueries() {
-  const el = document.getElementById("queriesTable");
   try {
-    const d = await fetchJSON(`${API}/api/client/queries?limit=15${dateParams()}`);
-    el.innerHTML = renderTable(d.rows, "query", "Query", "queriesTbl");
-  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+    const d = await fetchShared("queries?limit=15");
+    renderTable("queriesTable", d.rows, [
+      { key: "query", label: "Query", title: true },
+      { key: "clicks", label: "Clicks", num: true, fmt: num },
+      { key: "impressions", label: "Impr.", num: true, fmt: num },
+      { key: "ctr", label: "CTR", num: true, fmt: pct },
+      { key: "position", label: "Pos.", num: true, fmt: pos },
+    ]);
+  } catch (e) { document.getElementById("queriesTable").innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
 async function loadPages() {
-  const el = document.getElementById("pagesTable");
   try {
-    const d = await fetchJSON(`${API}/api/client/pages?limit=15${dateParams()}`);
-    el.innerHTML = renderTable(d.rows, "page", "Page", "pagesTbl");
-  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+    const d = await fetchShared("pages?limit=15");
+    renderTable("pagesTable", d.rows, [
+      { key: "page", label: "Page", title: true },
+      { key: "clicks", label: "Clicks", num: true, fmt: num },
+      { key: "impressions", label: "Impr.", num: true, fmt: num },
+      { key: "ctr", label: "CTR", num: true, fmt: pct },
+      { key: "position", label: "Pos.", num: true, fmt: pos },
+    ]);
+  } catch (e) { document.getElementById("pagesTable").innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
-async function loadCountries() {
-  const el = document.getElementById("countriesTable");
-    try {
-    const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
-    const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
-    el.innerHTML = renderTable(rows, "country", "Country");
-    el.innerHTML = `
-  <table>
-    <thead>
-      <tr>
-        <th>Country</th>
-        <th class="num">Clicks</th>
-        <th class="num">Impr.</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows.map(r => `
-        <tr>
-          <td title="${r.country}">${String(r.country).slice(0, 45)}</td>
-          <td class="num">${r.clicks}</td>
-          <td class="num">${r.impressions}</td>
-        </tr>
-      `).join("")}
-    </tbody>
-  </table>
-`;
-  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+/* ---- GSC: devices donut ---- */
+async function loadDevices() {
+  const ctx = document.getElementById("deviceChart");
+  try {
+    const d = await fetchShared("devices");
+    if (deviceChart) deviceChart.destroy();
+    deviceChart = new Chart(ctx, {
+      type: "doughnut",
+      data: {
+        labels: d.rows.map(r => r.device),
+        datasets: [{ data: d.rows.map(r => r.clicks), backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d"] }],
+      },
+      options: { maintainAspectRatio: false, radius: "100%", plugins: { legend: donutLegend() } },
+    });
+  } catch (e) { ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`; }
 }
 
-/* GSC returns ISO 3166-1 alpha-3 country codes (e.g. "ind", "usa").
-   This maps them to readable names for display only — the underlying
-   data/API is untouched. */
+/* ---- GSC: countries (ISO alpha-3 -> readable name, display only) ---- */
 const COUNTRY_NAMES = {
-  afg: "Afghanistan", alb: "Albania", dza: "Algeria", asm: "American Samoa", and: "Andorra",
-  ago: "Angola", aia: "Anguilla", ata: "Antarctica", atg: "Antigua and Barbuda", arg: "Argentina",
-  arm: "Armenia", abw: "Aruba", aus: "Australia", aut: "Austria", aze: "Azerbaijan",
-  bhs: "Bahamas", bhr: "Bahrain", bgd: "Bangladesh", brb: "Barbados", blr: "Belarus",
-  bel: "Belgium", blz: "Belize", ben: "Benin", bmu: "Bermuda", btn: "Bhutan",
-  bol: "Bolivia", bes: "Bonaire, Sint Eustatius and Saba", bih: "Bosnia and Herzegovina", bwa: "Botswana", bra: "Brazil",
-  iot: "British Indian Ocean Territory", brn: "Brunei", bgr: "Bulgaria", bfa: "Burkina Faso", bdi: "Burundi",
-  cpv: "Cabo Verde", khm: "Cambodia", cmr: "Cameroon", can: "Canada", cym: "Cayman Islands",
-  caf: "Central African Republic", tcd: "Chad", chl: "Chile", chn: "China", cxr: "Christmas Island",
-  cck: "Cocos Islands", col: "Colombia", com: "Comoros", cog: "Congo", cod: "DR Congo",
-  cok: "Cook Islands", cri: "Costa Rica", civ: "Côte d'Ivoire", hrv: "Croatia", cub: "Cuba",
-  cuw: "Curaçao", cyp: "Cyprus", cze: "Czechia", dnk: "Denmark", dji: "Djibouti",
-  dma: "Dominica", dom: "Dominican Republic", ecu: "Ecuador", egy: "Egypt", slv: "El Salvador",
-  gnq: "Equatorial Guinea", eri: "Eritrea", est: "Estonia", swz: "Eswatini", eth: "Ethiopia",
-  flk: "Falkland Islands", fro: "Faroe Islands", fji: "Fiji", fin: "Finland", fra: "France",
-  guf: "French Guiana", pyf: "French Polynesia", gab: "Gabon", gmb: "Gambia", geo: "Georgia",
-  deu: "Germany", gha: "Ghana", gib: "Gibraltar", grc: "Greece", grl: "Greenland",
-  grd: "Grenada", glp: "Guadeloupe", gum: "Guam", gtm: "Guatemala", ggy: "Guernsey",
-  gin: "Guinea", gnb: "Guinea-Bissau", guy: "Guyana", hti: "Haiti", hnd: "Honduras",
-  hkg: "Hong Kong", hun: "Hungary", isl: "Iceland", ind: "India", idn: "Indonesia",
-  irn: "Iran", irq: "Iraq", irl: "Ireland", imn: "Isle of Man", isr: "Israel",
-  ita: "Italy", jam: "Jamaica", jpn: "Japan", jey: "Jersey", jor: "Jordan",
-  kaz: "Kazakhstan", ken: "Kenya", kir: "Kiribati", prk: "North Korea", kor: "South Korea",
-  kwt: "Kuwait", kgz: "Kyrgyzstan", lao: "Laos", lva: "Latvia", lbn: "Lebanon",
-  lso: "Lesotho", lbr: "Liberia", lby: "Libya", lie: "Liechtenstein", ltu: "Lithuania",
-  lux: "Luxembourg", mac: "Macao", mdg: "Madagascar", mwi: "Malawi", mys: "Malaysia",
-  mdv: "Maldives", mli: "Mali", mlt: "Malta", mhl: "Marshall Islands", mtq: "Martinique",
-  mrt: "Mauritania", mus: "Mauritius", myt: "Mayotte", mex: "Mexico", fsm: "Micronesia",
-  mda: "Moldova", mco: "Monaco", mng: "Mongolia", mne: "Montenegro", msr: "Montserrat",
-  mar: "Morocco", moz: "Mozambique", mmr: "Myanmar", nam: "Namibia", nru: "Nauru",
-  npl: "Nepal", nld: "Netherlands", ncl: "New Caledonia", nzl: "New Zealand", nic: "Nicaragua",
-  ner: "Niger", nga: "Nigeria", niu: "Niue", nfk: "Norfolk Island", mkd: "North Macedonia",
-  mnp: "Northern Mariana Islands", nor: "Norway", omn: "Oman", pak: "Pakistan", plw: "Palau",
-  pse: "Palestine", pan: "Panama", png: "Papua New Guinea", pry: "Paraguay", per: "Peru",
-  phl: "Philippines", pcn: "Pitcairn Islands", pol: "Poland", prt: "Portugal", pri: "Puerto Rico",
-  qat: "Qatar", reu: "Réunion", rou: "Romania", rus: "Russia", rwa: "Rwanda",
-  blm: "Saint Barthélemy", shn: "Saint Helena", kna: "Saint Kitts and Nevis", lca: "Saint Lucia", maf: "Saint Martin",
-  spm: "Saint Pierre and Miquelon", vct: "Saint Vincent and the Grenadines", wsm: "Samoa", smr: "San Marino", stp: "São Tomé and Príncipe",
-  sau: "Saudi Arabia", sen: "Senegal", srb: "Serbia", syc: "Seychelles", sle: "Sierra Leone",
-  sgp: "Singapore", sxm: "Sint Maarten", svk: "Slovakia", svn: "Slovenia", slb: "Solomon Islands",
-  som: "Somalia", zaf: "South Africa", ssd: "South Sudan", esp: "Spain", lka: "Sri Lanka",
-  sdn: "Sudan", sur: "Suriname", swe: "Sweden", che: "Switzerland", syr: "Syria",
-  twn: "Taiwan", tjk: "Tajikistan", tza: "Tanzania", tha: "Thailand", tls: "Timor-Leste",
-  tgo: "Togo", tkl: "Tokelau", ton: "Tonga", tto: "Trinidad and Tobago", tun: "Tunisia",
-  tur: "Turkey", tkm: "Turkmenistan", tca: "Turks and Caicos Islands", tuv: "Tuvalu", uga: "Uganda",
-  ukr: "Ukraine", are: "United Arab Emirates", gbr: "United Kingdom", usa: "United States", umi: "U.S. Minor Outlying Islands",
-  ury: "Uruguay", uzb: "Uzbekistan", vut: "Vanuatu", vat: "Vatican City", ven: "Venezuela",
-  vnm: "Vietnam", vgb: "British Virgin Islands", vir: "U.S. Virgin Islands", wlf: "Wallis and Futuna", esh: "Western Sahara",
-  yem: "Yemen", zmb: "Zambia", zwe: "Zimbabwe", zzz: "Unknown Region"
+  usa: "United States", gbr: "United Kingdom", ind: "India", can: "Canada", aus: "Australia",
+  deu: "Germany", fra: "France", esp: "Spain", ita: "Italy", nld: "Netherlands", bra: "Brazil",
+  mex: "Mexico", jpn: "Japan", chn: "China", kor: "South Korea", rus: "Russia", zaf: "South Africa",
+  are: "United Arab Emirates", sgp: "Singapore", phl: "Philippines", pak: "Pakistan", bgd: "Bangladesh",
+  idn: "Indonesia", nga: "Nigeria", pol: "Poland", swe: "Sweden", che: "Switzerland", irl: "Ireland",
 };
-
 function countryDisplayName(code) {
   if (!code) return code;
   const key = String(code).trim().toLowerCase();
   return COUNTRY_NAMES[key] || String(code).toUpperCase();
 }
 
-/* Shared legend styling for both donut charts — theme-aware text color
-   (uses --text so it reads correctly in both dark and light mode). */
-function donutLegend() {
-  const c = chartColors();
-  return {
-    position: "bottom",
-    labels: {
-      color: c.text,
-      font: { size: 12, weight: "600" },
-      boxWidth: 10,
-      padding: 12,
-      generateLabels: function(chart) {
-        const ds = chart.data.datasets[0];
-        return chart.data.labels.map((label, i) => ({
-          text: `${label}  ${ds.data[i]}`,
-          fillStyle: ds.backgroundColor[i],
-          strokeStyle: ds.backgroundColor[i],
-          fontColor: c.text,
-          color: c.text,
-          hidden: false,
-          index: i
-        }));
-      }
-    }
-  };
-}
-
-async function loadDevices() {
-  const ctx = document.getElementById("deviceChart");
+async function loadCountries() {
   try {
-    const d = await fetchJSON(`${API}/api/client/devices?${dateParams().replace(/^&/, "")}`);
-    if (deviceChart) deviceChart.destroy();
-    deviceChart = new Chart(ctx, {
-      type: "doughnut",
-      data: {
-        labels: d.rows.map(r => r.device),
-        datasets: [{
-          data: d.rows.map(r => r.clicks),
-          backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d"]
-        }]
-      },
-      options: {
-        maintainAspectRatio: false,
-        radius: "100%",
-        plugins: { legend: donutLegend() }
-      }
-    });
-  } catch (e) {
-    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
-  }
+    const d = await fetchShared("countries?limit=10");
+    const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
+    renderTable("countriesTable", rows, [
+      { key: "country", label: "Country", title: true },
+      { key: "clicks", label: "Clicks", num: true, fmt: num },
+      { key: "impressions", label: "Impr.", num: true, fmt: num },
+    ]);
+  } catch (e) { document.getElementById("countriesTable").innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
-function renderMoversTable(rows, improved) {
-  if (!rows.length) return `<div class="loading">No comparable data for this range</div>`;
-  return `
+/* ---- GSC: movers (gainers / losers) ---- */
+function renderMoversTable(containerId, rows, improved) {
+  const el = document.getElementById(containerId);
+  if (!rows || !rows.length) { el.innerHTML = `<div class="empty">No comparable data for this range</div>`; return; }
+  el.innerHTML = `
     <table>
-      <thead><tr>
-        <th>Query</th><th class="num">Prev. Pos.</th><th class="num">Now</th><th class="num">Change</th>
-      </tr></thead>
+      <thead><tr><th>Query</th><th class="num">Prev. Pos.</th><th class="num">Now</th><th class="num">Change</th></tr></thead>
       <tbody>
         ${rows.map(r => `
           <tr>
             <td title="${r.query}">${String(r.query).slice(0, 40)}</td>
             <td class="num">${r.previous_position}</td>
             <td class="num">${r.current_position}</td>
-            <td class="num" style="color:${improved ? 'var(--accent2)' : '#ff6b6b'}">
-              ${r.position_change > 0 ? '+' : ''}${r.position_change}
-            </td>
+            <td class="num" style="color:${improved ? 'var(--accent2)' : '#ff6b6b'}">${r.position_change > 0 ? '+' : ''}${r.position_change}</td>
           </tr>`).join("")}
       </tbody>
     </table>`;
 }
 
 async function loadMovers() {
-  const gEl = document.getElementById("gainersTable");
-  const lEl = document.getElementById("losersTable");
   try {
-    const d = await fetchJSON(`${API}/api/client/movers?limit=10${dateParams()}`);
-    gEl.innerHTML = renderMoversTable(d.gainers, true);
-    lEl.innerHTML = renderMoversTable(d.losers, false);
+    const d = await fetchShared("movers?limit=10");
+    renderMoversTable("gainersTable", d.gainers, true);
+    renderMoversTable("losersTable", d.losers, false);
   } catch (e) {
-    gEl.innerHTML = `<div class="error">${e.message}</div>`;
-    lEl.innerHTML = `<div class="error">${e.message}</div>`;
+    document.getElementById("gainersTable").innerHTML = `<div class="error">${e.message}</div>`;
+    document.getElementById("losersTable").innerHTML = `<div class="error">${e.message}</div>`;
   }
 }
 
-async function loadSitemaps() {
-  const el = document.getElementById("sitemapsTable");
-  try {
-    const d = await fetchJSON(`${API}/api/client/sitemaps`);
-    if (!d.sitemaps.length) {
-      el.innerHTML = `<div class="loading">No sitemaps submitted for this property</div>`;
-      return;
-    }
-    el.innerHTML = `
-      <table>
-        <thead><tr>
-          <th>Path</th><th>Last Submitted</th><th class="num">Errors</th><th class="num">Warnings</th><th>Status</th>
-        </tr></thead>
-        <tbody>
-          ${d.sitemaps.map(s => `
-            <tr>
-              <td title="${s.path}">${s.path.slice(0, 50)}</td>
-              <td>${s.last_submitted ? s.last_submitted.slice(0, 10) : "—"}</td>
-              <td class="num" style="color:${s.errors > 0 ? '#ff6b6b' : 'inherit'}">${s.errors}</td>
-              <td class="num" style="color:${s.warnings > 0 ? '#f5a623' : 'inherit'}">${s.warnings}</td>
-              <td>${s.is_pending ? '⏳ Pending' : '✅ Processed'}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>`;
-  } catch (e) {
-    el.innerHTML = `<div class="error">${e.message}</div>`;
-  }
-}
-
-let rankHistoryChart;
-let trackedKeywords = [];
-
-// Read-only for clients — the SEO team manages the tracked-keyword list
-// from the admin dashboard, so there's no add/remove control here.
-function renderKeywordChips() {
-  const el = document.getElementById("keywordChips");
-  if (!trackedKeywords.length) {
-    el.innerHTML = `<div class="loading">No keywords tracked yet</div>`;
-    return;
-  }
-  el.innerHTML = trackedKeywords.map(kw => `
-    <span style="display:inline-flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:4px 10px; margin:0 6px 6px 0; font-size:12px;">
-      ${kw}
-    </span>`).join("");
-}
-
-async function loadTrackedKeywords() {
-  try {
-    const d = await fetchJSON(`${API}/api/client/tracked-keywords`);
-    trackedKeywords = d.keywords;
-  } catch (e) {
-    trackedKeywords = [];
-  }
-  renderKeywordChips();
-}
-
+/* ---- Keyword rank tracker (only shown if the site has tracked keywords) ---- */
 function renderRankTable(rows) {
-  if (!rows.length) return `<div class="loading">No keywords tracked yet — add some above</div>`;
+  if (!rows.length) return `<div class="empty">No keywords tracked for this site yet</div>`;
   return `
     <table>
       <thead><tr>
@@ -698,162 +425,69 @@ function renderRankTable(rows) {
       </tr></thead>
       <tbody>
         ${rows.map(r => `
-          <tr style="cursor:pointer;" onclick="loadRankHistory('${r.keyword.replace(/'/g, "\\'")}')">
+          <tr>
             <td title="${r.keyword}">${r.keyword}</td>
             <td class="num">${r.position !== null ? r.position : "not found"}</td>
             <td class="num">${r.previous_position !== null ? r.previous_position : "—"}</td>
             <td class="num" style="color:${r.change === null ? 'var(--muted)' : (r.change < 0 ? 'var(--accent2)' : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))}">
               ${r.change === null ? "—" : (r.change < 0 ? "▲ " : (r.change > 0 ? "▼ " : "— ")) + Math.abs(r.change)}
             </td>
-            <td class="num">${r.clicks}</td>
-            <td class="num">${r.impressions}</td>
+            <td class="num">${num(r.clicks)}</td>
+            <td class="num">${num(r.impressions)}</td>
           </tr>`).join("")}
       </tbody>
     </table>`;
 }
 
 async function loadRankTracker() {
-  const el = document.getElementById("rankTrackerTable");
   try {
-    const d = await fetchJSON(`${API}/api/client/rank-tracker?${dateParams().replace(/^&/, "")}`);
-    el.innerHTML = renderRankTable(d.rows);
-  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
+    const d = await fetchShared("rank-tracker");
+    if (!d.rows.length) return; // no keywords tracked for this site — leave the card hidden
+    document.getElementById("rankTrackerCard").style.display = "block";
+    document.getElementById("rankTrackerTable").innerHTML = renderRankTable(d.rows);
+  } catch (e) {
+    document.getElementById("rankTrackerCard").style.display = "block";
+    document.getElementById("rankTrackerTable").innerHTML = `<div class="error">${e.message}</div>`;
+  }
 }
 
-async function loadRankHistory(keyword) {
-  const card = document.getElementById("rankHistoryCard");
-  const title = document.getElementById("rankHistoryTitle");
-  const ctx = document.getElementById("rankHistoryChart");
-  card.style.display = "block";
-  title.textContent = `Position History — "${keyword}"`;
+/* ---- GA4 (only if the share link's token has a ga4_property_id) ---- */
+async function loadGa4() {
+  let summary;
   try {
-    const d = await fetchJSON(`${API}/api/client/rank-tracker/history?keyword=${encodeURIComponent(keyword)}${dateParams()}`);
-    if (rankHistoryChart) rankHistoryChart.destroy();
+    summary = await fetchShared("ga4/summary");
+  } catch (e) { return; }
+  if (!summary.available) return;
+
+  document.getElementById("ga4Heading").style.display = "block";
+  document.getElementById("ga4SummaryGrid").style.display = "grid";
+  document.getElementById("ga4ChartsRow").style.display = "grid";
+  document.getElementById("ga4PagesCard").style.display = "block";
+
+  const mins = Math.floor((summary.avg_session_duration || 0) / 60);
+  const secs = Math.round((summary.avg_session_duration || 0) % 60);
+  document.getElementById("ga4SummaryGrid").innerHTML = `
+    <div class="stat-card"><div class="label">New Users</div><div class="value">${num(summary.new_users)}</div></div>
+    <div class="stat-card"><div class="label">Total Users</div><div class="value">${num(summary.total_users)}</div></div>
+    <div class="stat-card"><div class="label">Sessions</div><div class="value">${num(summary.sessions)}</div></div>
+    <div class="stat-card"><div class="label">Views</div><div class="value">${num(summary.views)}</div></div>
+    <div class="stat-card"><div class="label">Bounce Rate</div><div class="value">${pct(summary.bounce_rate)}</div></div>
+    <div class="stat-card"><div class="label">Engagement Rate</div><div class="value">${pct(summary.engagement_rate)}</div></div>
+    <div class="stat-card"><div class="label">Avg. Engagement Time</div><div class="value">${mins}:${String(secs).padStart(2,'0')}</div></div>
+  `;
+
+  try {
+    const d = await fetchShared("ga4/trend");
     const c = chartColors();
-    rankHistoryChart = new Chart(ctx, {
-      type: "line",
-      data: {
-        labels: d.rows.map(r => r.date),
-        datasets: [{
-          label: "Position (lower = better)",
-          data: d.rows.map(r => r.position),
-          borderColor: "#4f8cff",
-          tension: 0.3,
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: {
-          y: { reverse: true, ticks: { color: c.muted }, grid: { color: c.border } },
-          x: { ticks: { color: c.muted }, grid: { color: c.border } },
-        },
-        plugins: { legend: { labels: { color: c.text } } }
-      }
-    });
-  } catch (e) {
-    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
-  }
-}
-
-function timeAgo(isoString) {
-  if (!isoString) return "never checked";
-  const then = new Date(isoString);
-  const mins = Math.floor((Date.now() - then.getTime()) / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function renderSerperTable(rows) {
-  if (!rows.length) return `<div class="loading">No keywords tracked yet</div>`;
-  return `
-    <table>
-      <thead><tr>
-        <th>Keyword</th><th class="num">Position</th><th>Matched URL</th><th>Last Checked</th>
-      </tr></thead>
-      <tbody>
-        ${rows.map(r => `
-          <tr>
-            <td title="${r.keyword}">${r.keyword}</td>
-            <td class="num">${r.found === null ? "—" : (r.found ? r.position : "Not in top 100")}</td>
-            <td style="font-size:12px; color:var(--muted);" title="${r.url || ''}">${r.url ? r.url.slice(0, 40) : "—"}</td>
-            <td style="font-size:12px; color:var(--muted);">${timeAgo(r.checked_at)}</td>
-          </tr>`).join("")}
-      </tbody>
-    </table>`;
-}
-
-async function loadSerperRankings() {
-  const el = document.getElementById("serperRankTable");
-  try {
-    const d = await fetchJSON(`${API}/api/client/serper/rankings`);
-    el.innerHTML = renderSerperTable(d.rows);
-  } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
-}
-
-async function exportCsv(dataType) {
-  const url = `${API}/api/client/export/csv?data_type=${dataType}${dateParams()}`;
-  try {
-    const res = await fetch(url, { headers: { "Authorization": `Bearer ${CLIENT_TOKEN}` } });
-    if (!res.ok) throw new Error("Export failed");
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${dataType}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  } catch (e) {
-    alert("Could not export CSV: " + e.message);
-  }
-  return false;
-}
-
-let ga4TrendChart, ga4TrafficChart;
-
-function ga4PropertyId() {
-  return CLIENT_GA4_PROPERTY_ID;
-}
-
-async function loadGa4Summary() {
-  const el = document.getElementById("ga4SummaryGrid");
-  const pid = ga4PropertyId();
-  if (!pid) { el.innerHTML = `<div class="loading">GA4 not configured for this site yet.</div>`; return; }
-  try {
-    const d = await fetchJSON(`${API}/api/client/ga4/summary?property_id=${pid}${dateParams()}`);
-    const mins = Math.floor(d.avg_session_duration / 60);
-    const secs = Math.round(d.avg_session_duration % 60);
-    el.innerHTML = `
-      <div class="stat-card"><div class="label">New Users</div><div class="value">${d.new_users}</div></div>
-      <div class="stat-card"><div class="label">Total Users</div><div class="value">${d.total_users}</div></div>
-      <div class="stat-card"><div class="label">Sessions</div><div class="value">${d.sessions}</div></div>
-      <div class="stat-card"><div class="label">Views</div><div class="value">${d.views}</div></div>
-      <div class="stat-card"><div class="label">Bounce Rate</div><div class="value">${d.bounce_rate}%</div></div>
-      <div class="stat-card"><div class="label">Engagement Rate</div><div class="value">${d.engagement_rate}%</div></div>
-      <div class="stat-card"><div class="label">Events / Session</div><div class="value">${d.events_per_session}</div></div>
-      <div class="stat-card"><div class="label">Avg. Engagement Time</div><div class="value">${mins}:${String(secs).padStart(2,'0')}</div></div>
-    `;
-  } catch (e) {
-    el.innerHTML = `<div class="error">${e.message}</div>`;
-  }
-}
-
-async function loadGa4Trend() {
-  const ctx = document.getElementById("ga4TrendChart");
-  const pid = ga4PropertyId();
-  if (!pid) return;
-  try {
-    const d = await fetchJSON(`${API}/api/client/ga4/trend?property_id=${pid}${dateParams()}`);
     if (ga4TrendChart) ga4TrendChart.destroy();
-    const c = chartColors();
-    ga4TrendChart = new Chart(ctx, {
+    ga4TrendChart = new Chart(document.getElementById("ga4TrendChart"), {
       type: "line",
       data: {
         labels: d.rows.map(r => r.date),
         datasets: [
           { label: "Active Users", data: d.rows.map(r => r.active_users), borderColor: "#4f8cff", tension: 0.3 },
           { label: "Sessions", data: d.rows.map(r => r.sessions), borderColor: "#f5a623", tension: 0.3 },
-        ]
+        ],
       },
       options: {
         responsive: true,
@@ -861,104 +495,43 @@ async function loadGa4Trend() {
           y: { ticks: { color: c.muted }, grid: { color: c.border } },
           x: { ticks: { color: c.muted }, grid: { color: c.border } },
         },
-        plugins: { legend: { labels: { color: c.text } } }
-      }
+        plugins: { legend: { labels: { color: c.text } } },
+      },
     });
-  } catch (e) {
-    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
-  }
-}
+  } catch (e) { /* non-fatal */ }
 
-async function loadGa4Traffic() {
-  const ctx = document.getElementById("ga4TrafficChart");
-  const pid = ga4PropertyId();
-  if (!pid) return;
   try {
-    const d = await fetchJSON(`${API}/api/client/ga4/traffic?property_id=${pid}${dateParams()}`);
+    const d = await fetchShared("ga4/traffic");
     if (ga4TrafficChart) ga4TrafficChart.destroy();
-    ga4TrafficChart = new Chart(ctx, {
+    ga4TrafficChart = new Chart(document.getElementById("ga4TrafficChart"), {
       type: "doughnut",
       data: {
         labels: d.rows.map(r => r.channel),
-        datasets: [{
-          data: d.rows.map(r => r.sessions),
-          backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d", "#a566ff", "#26c6da"]
-        }]
+        datasets: [{ data: d.rows.map(r => r.sessions), backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d", "#a566ff", "#26c6da"] }],
       },
-      options: {
-        maintainAspectRatio: false,
-        radius: "100%",
-        plugins: { legend: donutLegend() }
-      }
+      options: { maintainAspectRatio: false, radius: "100%", plugins: { legend: donutLegend() } },
     });
-  } catch (e) {
-    ctx.parentElement.innerHTML += `<div class="error">${e.message}</div>`;
-  }
-}
+  } catch (e) { /* non-fatal */ }
 
-async function loadGa4Pages() {
-  const el = document.getElementById("ga4PagesTable");
-  const pid = ga4PropertyId();
-  if (!pid) { el.innerHTML = `<div class="loading">Enter a GA4 Property ID above</div>`; return; }
   try {
-    const d = await fetchJSON(`${API}/api/client/ga4/pages?property_id=${pid}&limit=15${dateParams()}`);
-    if (!d.rows.length) { el.innerHTML = `<div class="loading">No data for this range</div>`; return; }
-    const rowHtml = r => `
-            <tr>
-              <td title="${r.page}">${r.page.slice(0, 60)}</td>
-              <td class="num">${r.views}</td>
-              <td class="num">${r.users}</td>
-            </tr>`;
-    const { html: bodyHtml, moreCount } = tbodyWithLoadMore("ga4PagesTbl", d.rows, rowHtml);
-    el.innerHTML = `
-      <table>
-        <thead><tr><th>Page</th><th class="num">Views</th><th class="num">Users</th></tr></thead>
-        ${bodyHtml}
-      </table>
-      ${loadMoreLink("ga4PagesTbl", moreCount)}`;
-  } catch (e) {
-    el.innerHTML = `<div class="error">${e.message}</div>`;
-  }
-}
-
-async function loadAll() {
-  if (!checkDatesOrShowError()) return;
-  loadSummary();
-  loadTrend();
-  loadQueries();
-  loadPages();
-  loadCountries();
-  loadDevices();
-  loadMovers();
-  loadSitemaps();
-  loadTrackedKeywords();
-  loadRankTracker();
-  loadSerperRankings();
-  loadGa4Summary();
-  loadGa4Trend();
-  loadGa4Traffic();
-  loadGa4Pages();
+    const d = await fetchShared("ga4/pages?limit=15");
+    renderTable("ga4PagesTable", d.rows, [
+      { key: "page", label: "Page", title: true },
+      { key: "views", label: "Views", num: true, fmt: num },
+      { key: "users", label: "Users", num: true, fmt: num },
+    ]);
+  } catch (e) { document.getElementById("ga4PagesTable").innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light');
   localStorage.setItem('dashboardTheme', isLight ? 'light' : 'dark');
   document.getElementById('themeToggleBtn').textContent = isLight ? '☀️' : '🌙';
-  refreshChartTheme();
-}
-
-function refreshChartTheme() {
   const c = chartColors();
-  [trendChart, rankHistoryChart, ga4TrendChart].forEach(chart => {
+  [trendChart, ga4TrendChart].forEach(chart => {
     if (!chart) return;
-    if (chart.options.scales.y) {
-      chart.options.scales.y.ticks.color = c.muted;
-      if (chart.options.scales.y.grid) chart.options.scales.y.grid.color = c.border;
-    }
-    if (chart.options.scales.x) {
-      chart.options.scales.x.ticks.color = c.muted;
-      if (chart.options.scales.x.grid) chart.options.scales.x.grid.color = c.border;
-    }
+    if (chart.options.scales.y) { chart.options.scales.y.ticks.color = c.muted; if (chart.options.scales.y.grid) chart.options.scales.y.grid.color = c.border; }
+    if (chart.options.scales.x) { chart.options.scales.x.ticks.color = c.muted; chart.options.scales.x.grid.color = c.border; }
     chart.options.plugins.legend.labels.color = c.text;
     chart.update();
   });
@@ -969,17 +542,26 @@ function refreshChartTheme() {
   });
 }
 
-(function init() {
-  document.getElementById('themeToggleBtn').textContent =
-    document.body.classList.contains('light') ? '☀️' : '🌙';
-  initClientView();
-  document.getElementById("rangePreset").addEventListener("change", () => {
-    applyPresetToInputs();
-    loadAll();
-  });
-  applyPresetToInputs();
+async function loadAll() {
+  const ok = await loadSummary();
+  if (!ok) return; // link expired/invalid — already showing the expired screen
+  loadTrend();
+  loadQueries();
+  loadPages();
+  loadDevices();
+  loadCountries();
+  loadMovers();
+  loadRankTracker();
+  loadGa4();
+}
+
+if (!token) {
+  showExpired("This link is missing its access token.");
+} else {
+  document.getElementById('themeToggleBtn').textContent = document.body.classList.contains('light') ? '☀️' : '🌙';
+  document.getElementById("app").style.display = "block";
   loadAll();
-})();
+}
 </script>
 </body>
 </html>
