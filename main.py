@@ -1003,6 +1003,15 @@ def api_shared_rank_tracker(ctx: dict = Depends(get_share_context)):
     return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
+@app.get("/api/shared/serper-rankings")
+def api_shared_serper_rankings(ctx: dict = Depends(get_share_context)):
+    """Read-only cached view of the Serper.dev 'True Rank' tracker — same
+    data as /api/client/serper/rankings. Never triggers a live (paid)
+    Serper check; just shows whatever the admin last refreshed."""
+    site_url = ctx["site_url"]
+    return {"site_url": site_url, "rows": serper_client.get_cached_rankings(site_url)}
+
+
 @app.get("/shared")
 def serve_shared_view():
     return FileResponse("static/shared.html")

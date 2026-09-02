@@ -161,20 +161,16 @@
       </div>
     </div>
 
-    <div class="grid-2">
-      <div class="chart-card">
-        <div class="section-title" style="color:var(--accent2);">📈 Gainers</div>
-        <div id="gainersTable" class="loading">Loading…</div>
-      </div>
-      <div class="chart-card">
-        <div class="section-title" style="color:#ff6b6b;">📉 Losers</div>
-        <div id="losersTable" class="loading">Loading…</div>
-      </div>
-    </div>
+  
 
     <div class="chart-card" id="rankTrackerCard" style="display:none;">
       <div class="section-title">🔍 Keyword Rank Tracker</div>
       <div id="rankTrackerTable" class="loading">Loading…</div>
+    </div>
+
+    <div class="chart-card" id="serperRankCard" style="display:none;">
+      <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span></div>
+      <div id="serperRankTable" class="loading">Loading…</div>
     </div>
   </main>
 
@@ -416,174 +412,79 @@ async function loadMovers() {
 
 /* ---- Keyword rank tracker (only shown if the site has tracked keywords) ---- */
 function renderRankTable(rows) {
-  if (!rows.length) {
-    return `<div class="empty">No keywords tracked for this site yet</div>`;
-  }
-
-  const initialCount = 10;
-  const visibleRows = rows.slice(0, initialCount);
-  const hasMore = rows.length > initialCount;
-
-  function buildTable(data) {
-    return `
-      <table>
-        <thead>
-          <tr>
-            <th>Keyword</th>
-            <th class="num">Position</th>
-            <th class="num">Prev.</th>
-            <th class="num">Change</th>
-            <th class="num">Clicks</th>
-            <th class="num">Impr.</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          ${data.map(r => `
-            <tr>
-              <td title="${r.keyword}">${r.keyword}</td>
-
-              <td class="num">
-                ${r.position !== null ? r.position : "not found"}
-              </td>
-
-              <td class="num">
-                ${r.previous_position !== null ? r.previous_position : "—"}
-              </td>
-
-              <td class="num" style="color:${
-                r.change === null
-                  ? 'var(--muted)'
-                  : (r.change < 0
-                      ? 'var(--accent2)'
-                      : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))
-              }">
-                ${
-                  r.change === null
-                    ? "—"
-                    : (r.change < 0
-                        ? "▲ "
-                        : (r.change > 0 ? "▼ " : "— "))
-                      + Math.abs(r.change)
-                }
-              </td>
-
-              <td class="num">${num(r.clicks)}</td>
-              <td class="num">${num(r.impressions)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
-  }
-
+  if (!rows.length) return `<div class="empty">No keywords tracked for this site yet</div>`;
   return `
-    <div id="rankTableContent">
-      ${buildTable(visibleRows)}
-    </div>
-
-    ${
-      hasMore
-        ? `
-          <div style="text-align:center; margin-top:14px;">
-            <button
-              id="rankToggleBtn"
-              onclick="toggleRankRows()"
-              style="padding:8px 16px;"
-            >
-              Load More
-            </button>
-          </div>
-        `
-        : ""
-    }
-  `;
-}
-
-let rankTrackerRows = [];
-let rankTrackerExpanded = false;
-
-function toggleRankRows() {
-  const content = document.getElementById("rankTableContent");
-  const button = document.getElementById("rankToggleBtn");
-
-  if (!content || !button) return;
-
-  rankTrackerExpanded = !rankTrackerExpanded;
-
-  const rows = rankTrackerExpanded
-    ? rankTrackerRows
-    : rankTrackerRows.slice(0, 10);
-
-  content.innerHTML = `
     <table>
-      <thead>
-        <tr>
-          <th>Keyword</th>
-          <th class="num">Position</th>
-          <th class="num">Prev.</th>
-          <th class="num">Change</th>
-          <th class="num">Clicks</th>
-          <th class="num">Impr.</th>
-        </tr>
-      </thead>
-
+      <thead><tr>
+        <th>Keyword</th><th class="num">Position</th><th class="num">Prev.</th>
+        <th class="num">Change</th><th class="num">Clicks</th><th class="num">Impr.</th>
+      </tr></thead>
       <tbody>
         ${rows.map(r => `
           <tr>
             <td title="${r.keyword}">${r.keyword}</td>
-
-            <td class="num">
-              ${r.position !== null ? r.position : "not found"}
+            <td class="num">${r.position !== null ? r.position : "not found"}</td>
+            <td class="num">${r.previous_position !== null ? r.previous_position : "—"}</td>
+            <td class="num" style="color:${r.change === null ? 'var(--muted)' : (r.change < 0 ? 'var(--accent2)' : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))}">
+              ${r.change === null ? "—" : (r.change < 0 ? "▲ " : (r.change > 0 ? "▼ " : "— ")) + Math.abs(r.change)}
             </td>
-
-            <td class="num">
-              ${r.previous_position !== null ? r.previous_position : "—"}
-            </td>
-
-            <td class="num" style="color:${
-              r.change === null
-                ? 'var(--muted)'
-                : (r.change < 0
-                    ? 'var(--accent2)'
-                    : (r.change > 0 ? '#ff6b6b' : 'var(--muted)'))
-            }">
-              ${
-                r.change === null
-                  ? "—"
-                  : (r.change < 0
-                      ? "▲ "
-                      : (r.change > 0 ? "▼ " : "— "))
-                    + Math.abs(r.change)
-              }
-            </td>
-
             <td class="num">${num(r.clicks)}</td>
             <td class="num">${num(r.impressions)}</td>
-          </tr>
-        `).join("")}
+          </tr>`).join("")}
       </tbody>
-    </table>
-  `;
-
-  button.textContent = rankTrackerExpanded
-    ? "Show Less"
-    : "Load More";
+    </table>`;
 }
 
 async function loadRankTracker() {
   try {
     const d = await fetchShared("rank-tracker");
     if (!d.rows.length) return; // no keywords tracked for this site — leave the card hidden
-        document.getElementById("rankTrackerCard").style.display = "block";
-        rankTrackerRows = d.rows;
-    rankTrackerExpanded = false;
-
-    document.getElementById("rankTrackerTable").innerHTML =
-      renderRankTable(d.rows);
+    document.getElementById("rankTrackerCard").style.display = "block";
+    document.getElementById("rankTrackerTable").innerHTML = renderRankTable(d.rows);
   } catch (e) {
     document.getElementById("rankTrackerCard").style.display = "block";
     document.getElementById("rankTrackerTable").innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+function timeAgo(isoString) {
+  if (!isoString) return "never checked";
+  const then = new Date(isoString);
+  const mins = Math.floor((Date.now() - then.getTime()) / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function renderSerperTable(rows) {
+  if (!rows.length) return `<div class="empty">No keywords tracked yet</div>`;
+  return `
+    <table>
+      <thead><tr>
+        <th>Keyword</th><th class="num">Position</th><th>Matched URL</th><th>Last Checked</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td title="${r.keyword}">${r.keyword}</td>
+            <td class="num">${r.found === null ? "—" : (r.found ? r.position : "Not in top 100")}</td>
+            <td style="font-size:12px; color:var(--muted);" title="${r.url || ''}">${r.url ? String(r.url).slice(0, 40) : "—"}</td>
+            <td style="font-size:12px; color:var(--muted);">${timeAgo(r.checked_at)}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+async function loadSerperRankings() {
+  try {
+    const d = await fetchShared("serper-rankings");
+    if (!d.rows.length) return; // nothing tracked in Serper for this site — leave the card hidden
+    document.getElementById("serperRankCard").style.display = "block";
+    document.getElementById("serperRankTable").innerHTML = renderSerperTable(d.rows);
+  } catch (e) {
+    document.getElementById("serperRankCard").style.display = "block";
+    document.getElementById("serperRankTable").innerHTML = `<div class="error">${e.message}</div>`;
   }
 }
 
@@ -688,6 +589,7 @@ async function loadAll() {
   loadCountries();
   loadMovers();
   loadRankTracker();
+  loadSerperRankings();
   loadGa4();
 }
 
