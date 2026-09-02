@@ -33,6 +33,7 @@ def _save(data):
 
 def create_workflow(site_url, email, scheduled_time,
                      ga4_property_id=None, drive_link=None, custom_message=None,
+                     custom_subject=None,
                      recurrence="once", send_reminders=True,
                      login_id=None, login_password=None,
                      report_start_date=None, report_end_date=None):
@@ -71,6 +72,7 @@ def create_workflow(site_url, email, scheduled_time,
         "report_start_date": report_start_date,
         "report_end_date": report_end_date,
         "custom_message": custom_message,
+        "custom_subject": custom_subject,
         "login_id": login_id,
         "login_password": login_password,
         "recurrence": recurrence if recurrence in ("once", "monthly") else "once",

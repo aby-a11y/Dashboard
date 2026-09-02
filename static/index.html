@@ -749,7 +749,10 @@
 </div>
 
 <div id="clientAccessPanel" style="display:none; margin: 0 28px 24px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 20px; max-width:1300px; margin-left:auto; margin-right:auto;">
-  <div class="section-title">Client Access — logins &amp; report links</div>
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0;">
+    <div class="section-title" style="margin:0;">Client Access — logins &amp; report links</div>
+    <button onclick="toggleClientAccessPanel()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+  </div>
   <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap:10px; margin-bottom:12px;">
     <input type="text" id="caClientId" placeholder="Client ID (login username)">
     <input type="password" id="caPassword" placeholder="Password (leave blank to keep existing)">
@@ -2305,11 +2308,10 @@ async function startWorkflow() {
   const drive_link = document.getElementById("wfDriveLink").value.trim();
   const report_start_date = document.getElementById("wfReportStart").value || undefined;
   const report_end_date = document.getElementById("wfReportEnd").value || undefined;
- const custom_message =
+   const custom_message =
   document.getElementById("wfCustomMessage").innerHTML.trim();
 
-const subject =
-  document.getElementById("wfSubject").value.trim();
+  const subject = document.getElementById("wfSubject").value.trim();
   const login_id = document.getElementById("wfLoginId").value.trim();
   const login_password = document.getElementById("wfLoginPassword").value.trim();
   const ga4_property_id = document.getElementById("ga4PropertyId").value.trim() || undefined;
@@ -2344,6 +2346,7 @@ const subject =
         drive_link: drive_link || undefined,
         report_start_date, report_end_date,
         custom_message: custom_message || undefined,
+        subject: subject || undefined,
         login_id: login_id || undefined,
         login_password: login_password || undefined,
         recurrence, send_reminders,

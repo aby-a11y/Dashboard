@@ -321,7 +321,7 @@ class AdminClientBody(BaseModel):
 
 
 @app.post("/api/admin/clients")
-def api_admin_create_client(body: AdminClientBody):
+def api_admin_create_client(body: AdminClientBody, _admin: str = Depends(get_current_admin)):
     try:
         return client_auth.create_or_update_client(
             body.client_id, body.site_url, body.password, body.name, body.ga4_property_id
@@ -331,12 +331,12 @@ def api_admin_create_client(body: AdminClientBody):
 
 
 @app.get("/api/admin/clients")
-def api_admin_list_clients():
+def api_admin_list_clients(_admin: str = Depends(get_current_admin)):
     return {"clients": client_auth.list_clients()}
 
 
 @app.delete("/api/admin/clients/{client_id}")
-def api_admin_delete_client(client_id: str):
+def api_admin_delete_client(client_id: str, _admin: str = Depends(get_current_admin)):
     if not client_auth.delete_client(client_id):
         raise HTTPException(status_code=404, detail="No such client_id")
     return {"status": "deleted", "client_id": client_id}
@@ -348,13 +348,13 @@ class ReportLinkBody(BaseModel):
 
 
 @app.post("/api/admin/report-link")
-def api_admin_set_report_link(body: ReportLinkBody):
+def api_admin_set_report_link(body: ReportLinkBody, _admin: str = Depends(get_current_admin)):
     client_auth.set_report_link(body.site_url, body.drive_link)
     return {"site_url": body.site_url, "drive_link": body.drive_link}
 
 
 @app.get("/api/admin/report-link")
-def api_admin_get_report_link(site_url: str):
+def api_admin_get_report_link(site_url: str, _admin: str = Depends(get_current_admin)):
     return {"site_url": site_url, "drive_link": client_auth.get_report_link(site_url)}
 
 
@@ -364,7 +364,7 @@ class ReportEmailBody(BaseModel):
 
 
 @app.post("/api/admin/report-email")
-def api_admin_set_report_email(body: ReportEmailBody):
+def api_admin_set_report_email(body: ReportEmailBody, _admin: str = Depends(get_current_admin)):
     """Save the client's owner email once per site — the workflow re-uses
     it every time so you don't have to re-type it for each new report."""
     client_auth.set_report_email(body.site_url, body.email)
@@ -372,7 +372,7 @@ def api_admin_set_report_email(body: ReportEmailBody):
 
 
 @app.get("/api/admin/report-email")
-def api_admin_get_report_email(site_url: str):
+def api_admin_get_report_email(site_url: str, _admin: str = Depends(get_current_admin)):
     return {"site_url": site_url, "email": client_auth.get_report_email(site_url)}
 
 
@@ -387,6 +387,7 @@ class WorkflowCreateBody(BaseModel):
     report_start_date: Optional[str] = None  # YYYY-MM-DD — data range the emailed share link will show
     report_end_date: Optional[str] = None    # YYYY-MM-DD
     custom_message: Optional[str] = None   # optional — replaces the default email intro text
+    subject: Optional[str] = None          # optional — replaces the default email subject line
     login_id: Optional[str] = None         # optional — included in the email as "Login ID"
     login_password: Optional[str] = None   # optional — included in the email as "Password"
     recurrence: str = "once"               # "once" | "monthly"
@@ -394,7 +395,7 @@ class WorkflowCreateBody(BaseModel):
 
 
 @app.post("/api/admin/workflow/create")
-def api_create_workflow(body: WorkflowCreateBody):
+def api_create_workflow(body: WorkflowCreateBody, _admin: str = Depends(get_current_admin)):
     if body.recurrence not in ("once", "monthly"):
         raise HTTPException(status_code=400, detail="recurrence must be 'once' or 'monthly'")
     if not email_scheduler.email_client.is_configured():
@@ -426,6 +427,7 @@ def api_create_workflow(body: WorkflowCreateBody):
         site_url=body.site_url, email=body.email,
         scheduled_time=body.scheduled_time, ga4_property_id=body.ga4_property_id,
         drive_link=body.drive_link, custom_message=body.custom_message,
+        custom_subject=body.subject,
         report_start_date=body.report_start_date, report_end_date=body.report_end_date,
         login_id=body.login_id, login_password=body.login_password,
         recurrence=body.recurrence, send_reminders=body.send_reminders,
@@ -463,7 +465,7 @@ class BulkWorkflowCreateBody(BaseModel):
 
 
 @app.post("/api/admin/workflow/bulk-create")
-def api_bulk_create_workflow(body: BulkWorkflowCreateBody):
+def api_bulk_create_workflow(body: BulkWorkflowCreateBody, _admin: str = Depends(get_current_admin)):
     if body.recurrence not in ("once", "monthly"):
         raise HTTPException(status_code=400, detail="recurrence must be 'once' or 'monthly'")
     if body.daily_batch_size < 1:
@@ -527,12 +529,12 @@ def api_bulk_create_workflow(body: BulkWorkflowCreateBody):
 
 
 @app.get("/api/admin/workflow/list")
-def api_list_workflows(site_url: Optional[str] = None):
+def api_list_workflows(site_url: Optional[str] = None, _admin: str = Depends(get_current_admin)):
     return {"workflows": workflow_store.list_workflows(site_url)}
 
 
 @app.delete("/api/admin/workflow/{workflow_id}")
-def api_cancel_workflow(workflow_id: str):
+def api_cancel_workflow(workflow_id: str, _admin: str = Depends(get_current_admin)):
     wf = workflow_store.get_workflow(workflow_id)
     if not wf:
         raise HTTPException(status_code=404, detail="No such workflow_id")
@@ -553,7 +555,7 @@ def client_login_page():
 # /api/ga4/* etc. call below uses whichever account is currently active.
 
 @app.get("/api/admin/accounts")
-def api_list_accounts():
+def api_list_accounts(_admin: str = Depends(get_current_admin)):
     return {"accounts": gsc_client.list_accounts()}
 
 
@@ -562,6 +564,7 @@ def api_add_account(
     account_id: str = Form(...),
     label: str = Form(...),
     client_secret_file: UploadFile = File(...),
+    _admin: str = Depends(get_current_admin),
 ):
     """Registers a new Google account. Upload the OAuth client_secret.json
     you downloaded from Google Cloud Console for that account — it gets
@@ -576,7 +579,7 @@ def api_add_account(
 
 
 @app.delete("/api/admin/accounts/{account_id}")
-def api_delete_account(account_id: str):
+def api_delete_account(account_id: str, _admin: str = Depends(get_current_admin)):
     if not gsc_client.delete_account(account_id):
         raise HTTPException(status_code=404, detail="No such account_id")
     return {"status": "deleted", "account_id": account_id}
@@ -587,7 +590,7 @@ class AccountSwitchBody(BaseModel):
 
 
 @app.post("/api/admin/accounts/switch")
-def api_switch_account(body: AccountSwitchBody):
+def api_switch_account(body: AccountSwitchBody, _admin: str = Depends(get_current_admin)):
     try:
         gsc_client.set_active_account(body.account_id)
     except ValueError as ex:
@@ -599,17 +602,17 @@ def api_switch_account(body: AccountSwitchBody):
 
 
 @app.get("/api/admin/accounts/active")
-def api_active_account():
+def api_active_account(_admin: str = Depends(get_current_admin)):
     return {"active_account": gsc_client.get_active_account_id()}
 
 
 @app.get("/api/sites")
-def api_sites():
+def api_sites(_admin: str = Depends(get_current_admin)):
     return {"sites": _call(gsc_client.list_sites)}
 
 
 @app.get("/api/site-ga4-map")
-def api_site_ga4_map():
+def api_site_ga4_map(_admin: str = Depends(get_current_admin)):
     """Returns the {site_url: ga4_property_id} mapping so the frontend
     can auto-fill the GA4 Property ID when a site is selected."""
     import json
@@ -622,7 +625,8 @@ def api_site_ga4_map():
 
 
 @app.get("/api/summary")
-def api_summary(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_summary(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                 _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     data = _call(gsc_client.get_summary, site_url, s, e)
     return {"site_url": site_url, "start_date": s, "end_date": e, **data}
@@ -634,7 +638,7 @@ def client():
 
 @app.get("/api/queries")
 def api_queries(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                 limit: int = Query(25, le=1000)):
+                 limit: int = Query(25, le=1000), _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(gsc_client.get_queries, site_url, s, e, limit)
     return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
@@ -642,14 +646,15 @@ def api_queries(site_url: str, start_date: Optional[str] = None, end_date: Optio
 
 @app.get("/api/pages")
 def api_pages(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
-              limit: int = Query(25, le=1000)):
+              limit: int = Query(25, le=1000), _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(gsc_client.get_pages, site_url, s, e, limit)
     return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/devices")
-def api_devices(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_devices(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                 _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(gsc_client.get_devices, site_url, s, e)
     return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
@@ -657,41 +662,43 @@ def api_devices(site_url: str, start_date: Optional[str] = None, end_date: Optio
 
 @app.get("/api/countries")
 def api_countries(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                   limit: int = Query(15, le=250)):
+                   limit: int = Query(15, le=250), _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(gsc_client.get_countries, site_url, s, e, limit)
     return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/trend")
-def api_trend(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_trend(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+               _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(gsc_client.get_trend, site_url, s, e)
     return {"site_url": site_url, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/comparison")
-def api_comparison(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_comparison(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                    _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     return _call(gsc_client.get_comparison, site_url, s, e)
 
 
 @app.get("/api/movers")
 def api_movers(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                limit: int = Query(10, le=50)):
+                limit: int = Query(10, le=50), _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     return _call(gsc_client.get_movers, site_url, s, e, limit)
 
 
 @app.get("/api/sitemaps")
-def api_sitemaps(site_url: str):
+def api_sitemaps(site_url: str, _admin: str = Depends(get_current_admin)):
     return {"site_url": site_url, "sitemaps": _call(gsc_client.get_sitemaps, site_url)}
 
 
 @app.get("/api/export/csv")
 def api_export_csv(site_url: str, data_type: str = Query(..., pattern="^(queries|pages|devices|countries|trend)$"),
                     start_date: Optional[str] = None, end_date: Optional[str] = None,
-                    limit: int = Query(1000, le=5000)):
+                    limit: int = Query(1000, le=5000), _admin: str = Depends(get_current_admin)):
     import csv
     import io
     from fastapi.responses import StreamingResponse
@@ -730,18 +737,19 @@ class TrackedKeywordsBody(BaseModel):
 
 
 @app.get("/api/tracked-keywords")
-def api_get_tracked_keywords(site_url: str):
+def api_get_tracked_keywords(site_url: str, _admin: str = Depends(get_current_admin)):
     return {"site_url": site_url, "keywords": gsc_client.get_tracked_keywords(site_url)}
 
 
 @app.post("/api/tracked-keywords")
-def api_set_tracked_keywords(body: TrackedKeywordsBody):
+def api_set_tracked_keywords(body: TrackedKeywordsBody, _admin: str = Depends(get_current_admin)):
     keywords = gsc_client.set_tracked_keywords(body.site_url, body.keywords)
     return {"site_url": body.site_url, "keywords": keywords}
 
 
 @app.get("/api/rank-tracker")
-def api_rank_tracker(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_rank_tracker(site_url: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                      _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     keywords = gsc_client.get_tracked_keywords(site_url)
     if not keywords:
@@ -752,7 +760,8 @@ def api_rank_tracker(site_url: str, start_date: Optional[str] = None, end_date: 
 
 @app.get("/api/rank-tracker/history")
 def api_rank_tracker_history(site_url: str, keyword: str,
-                              start_date: Optional[str] = None, end_date: Optional[str] = None):
+                              start_date: Optional[str] = None, end_date: Optional[str] = None,
+                              _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(gsc_client.get_keyword_position_history, site_url, keyword, s, e)
     return {"site_url": site_url, "keyword": keyword, "start_date": s, "end_date": e, "rows": rows}
@@ -772,24 +781,24 @@ class SerperRefreshBody(BaseModel):
 
 
 @app.get("/api/serper/tracked-keywords")
-def api_serper_get_keywords(site_url: str):
+def api_serper_get_keywords(site_url: str, _admin: str = Depends(get_current_admin)):
     return {"site_url": site_url, "keywords": serper_client.get_tracked_keywords(site_url)}
 
 
 @app.post("/api/serper/tracked-keywords")
-def api_serper_set_keywords(body: SerperKeywordsBody):
+def api_serper_set_keywords(body: SerperKeywordsBody, _admin: str = Depends(get_current_admin)):
     keywords = serper_client.set_tracked_keywords(body.site_url, body.keywords)
     return {"site_url": body.site_url, "keywords": keywords}
 
 
 @app.get("/api/serper/rankings")
-def api_serper_rankings(site_url: str):
+def api_serper_rankings(site_url: str, _admin: str = Depends(get_current_admin)):
     """Read-only — returns the last cached check. Does NOT call Serper, so it's free to load."""
     return {"site_url": site_url, "rows": serper_client.get_cached_rankings(site_url)}
 
 
 @app.post("/api/serper/refresh")
-def api_serper_refresh(body: SerperRefreshBody):
+def api_serper_refresh(body: SerperRefreshBody, _admin: str = Depends(get_current_admin)):
     """Actually queries Serper for every tracked keyword on this site.
     Each keyword tracked = 1 paid API credit — only call this on demand."""
     keywords = serper_client.get_tracked_keywords(body.site_url)
@@ -807,21 +816,24 @@ def api_serper_refresh(body: SerperRefreshBody):
 # ---------------- GA4 endpoints ----------------
 
 @app.get("/api/ga4/summary")
-def api_ga4_summary(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_ga4_summary(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                     _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     data = _call(ga4_client.get_summary, property_id, s, e)
     return {"property_id": property_id, "start_date": s, "end_date": e, **data}
 
 
 @app.get("/api/ga4/traffic")
-def api_ga4_traffic(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_ga4_traffic(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                     _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(ga4_client.get_traffic_sources, property_id, s, e)
     return {"property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
 
 
 @app.get("/api/ga4/trend")
-def api_ga4_trend(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_ga4_trend(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                   _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(ga4_client.get_trend, property_id, s, e)
     return {"property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
@@ -829,7 +841,7 @@ def api_ga4_trend(property_id: str, start_date: Optional[str] = None, end_date: 
 
 @app.get("/api/ga4/pages")
 def api_ga4_pages(property_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                   limit: int = Query(15, le=200)):
+                   limit: int = Query(15, le=200), _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(ga4_client.get_top_pages, property_id, s, e, limit)
     return {"property_id": property_id, "start_date": s, "end_date": e, "rows": rows}
@@ -1030,7 +1042,7 @@ def pdf_report(
         }
     )
 @app.get("/api/ga4/list-properties")
-def api_ga4_list_properties():
+def api_ga4_list_properties(_admin: str = Depends(get_current_admin)):
     return {"properties": _call(ga4_client.list_all_properties)}
 
 @app.get("/client-login")

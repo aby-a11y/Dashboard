@@ -98,16 +98,19 @@ def _build_email(wf, is_reminder, reminder_number):
     (if the admin wrote one) replaces the default intro text; the link,
     login box, and reminder note are still appended.
 
+    custom_subject (if the admin typed one) replaces the default
+    "Your SEO Report is Ready — <site>" subject line; reminders still
+    get "Reminder #N: " prefixed onto whichever subject (custom or
+    default) so they're identifiable in an inbox.
+
     Both links are included when both are available: a freshly-minted,
     no-login share link for report_start_date..report_end_date (see
     _build_share_link) AND the manually-pasted drive_link (client's
     full dashboard / login page). Either one is skipped if not set on
     this workflow — a workflow with only a report period sends just
     the share link, one with only drive_link sends just that."""
-    if is_reminder:
-        subject = f"Reminder #{reminder_number}: Your SEO Report — {wf['site_url']}"
-    else:
-        subject = f"Your SEO Report is Ready — {wf['site_url']}"
+    base_subject = (wf.get("custom_subject") or "").strip() or f"Your SEO Report is Ready — {wf['site_url']}"
+    subject = f"Reminder #{reminder_number}: {base_subject}" if is_reminder else base_subject
 
     custom_message = (wf.get("custom_message") or "").strip()
     if custom_message:

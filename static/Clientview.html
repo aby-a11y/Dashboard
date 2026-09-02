@@ -485,7 +485,7 @@ async function loadPages() {
 async function loadCountries() {
   const el = document.getElementById("countriesTable");
     try {
-    const d = await fetchJSON(`${API}/api/countries?site_url=${encodeURIComponent(currentSite())}${dateParams()}&limit=10`);
+    const d = await fetchJSON(`${API}/api/client/countries?limit=10${dateParams()}`);
     const rows = d.rows.map(r => ({ ...r, country: countryDisplayName(r.country) }));
     el.innerHTML = renderTable(rows, "country", "Country");
     el.innerHTML = `
