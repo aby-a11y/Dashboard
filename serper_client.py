@@ -45,9 +45,27 @@ def get_tracked_keywords(site_url):
 
 
 def set_tracked_keywords(site_url, keywords):
+    """Overwrites the whole list for a site (used by the single add/remove chip UI)."""
     data = _load_json(KEYWORDS_FILE)
     cleaned, seen = [], set()
     for kw in keywords:
+        kw = (kw or "").strip()
+        if kw and kw.lower() not in seen:
+            cleaned.append(kw)
+            seen.add(kw.lower())
+    data[site_url] = cleaned
+    _save_json(KEYWORDS_FILE, data)
+    return cleaned
+
+
+def add_tracked_keywords_bulk(site_url, keywords):
+    """Merges a batch of keywords into the existing tracked list for a site
+    instead of overwriting it — used by the admin 'bulk upload' box so pasting
+    50 keywords doesn't wipe out ones already being tracked."""
+    data = _load_json(KEYWORDS_FILE)
+    existing = data.get(site_url, [])
+    cleaned, seen = [], set()
+    for kw in existing + list(keywords):
         kw = (kw or "").strip()
         if kw and kw.lower() not in seen:
             cleaned.append(kw)
@@ -125,20 +143,28 @@ def check_ranking(keyword, site_url, location=None, gl="us", max_pages=5):
 
 
 def refresh_rankings(site_url, keywords, location=None, gl="us"):
-    """Actually hits Serper for every keyword and overwrites the cache for
-    this site. Call this only when the user explicitly asks to refresh —
-    each keyword = 1 to 5 paid API credits (stops early once found)."""
+    """Hits Serper for every keyword and updates the cache for this site.
+    Call this only when the user explicitly asks to refresh — each keyword
+    costs 1 to 5 paid API credits (stops early once found).
+
+    Before overwriting a keyword's entry, its current position is carried
+    forward as previous_position/previous_checked_at, so the very next
+    refresh (e.g. next week) can show a current-vs-previous comparison.
+    """
     cache = _load_json(CACHE_FILE)
     site_cache = cache.get(site_url, {})
     now = datetime.datetime.utcnow().isoformat() + "Z"
 
     for kw in keywords:
         result = check_ranking(kw, site_url, location=location, gl=gl)
+        prior = site_cache.get(kw)  # this week's "previous" is last refresh's "current"
         site_cache[kw] = {
             "position": result["position"],
             "url": result["url"],
             "found": result["found"],
             "checked_at": now,
+            "previous_position": prior.get("position") if prior else None,
+            "previous_checked_at": prior.get("checked_at") if prior else None,
         }
 
     cache[site_url] = site_cache
@@ -149,7 +175,13 @@ def refresh_rankings(site_url, keywords, location=None, gl="us"):
 def get_cached_rankings(site_url):
     """Read-only — returns whatever was cached last time refresh_rankings()
     ran, merged with the current tracked-keyword list (so newly added
-    keywords show as 'not checked yet' instead of disappearing)."""
+    keywords show as 'not checked yet' instead of disappearing).
+
+    Each row also includes previous_position and a computed `change`
+    (negative = improved, i.e. position number went down), same convention
+    as the GSC rank tracker, so the UI can render a current-vs-previous
+    comparison without extra calls.
+    """
     cache = _load_json(CACHE_FILE).get(site_url, {})
     keywords = get_tracked_keywords(site_url)
 
@@ -157,7 +189,22 @@ def get_cached_rankings(site_url):
     for kw in keywords:
         cached = cache.get(kw)
         if cached:
-            rows.append({"keyword": kw, **cached})
+            pos = cached.get("position")
+            prev_pos = cached.get("previous_position")
+            change = round(pos - prev_pos, 1) if (pos is not None and prev_pos is not None) else None
+            rows.append({
+                "keyword": kw,
+                "position": pos,
+                "url": cached.get("url"),
+                "found": cached.get("found"),
+                "checked_at": cached.get("checked_at"),
+                "previous_position": prev_pos,
+                "previous_checked_at": cached.get("previous_checked_at"),
+                "change": change,
+            })
         else:
-            rows.append({"keyword": kw, "position": None, "url": None, "found": None, "checked_at": None})
+            rows.append({
+                "keyword": kw, "position": None, "url": None, "found": None, "checked_at": None,
+                "previous_position": None, "previous_checked_at": None, "change": None,
+            })
     return rows

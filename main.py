@@ -791,6 +791,17 @@ def api_serper_set_keywords(body: SerperKeywordsBody, _admin: str = Depends(get_
     return {"site_url": body.site_url, "keywords": keywords}
 
 
+@app.post("/api/serper/tracked-keywords/bulk")
+def api_serper_bulk_add_keywords(body: SerperKeywordsBody, _admin: str = Depends(get_current_admin)):
+    """Adds many keywords at once, merged with whatever is already tracked
+    for this site (does not remove existing keywords) — for pasting a big
+    list in one go from the admin panel instead of adding one at a time."""
+    if not body.keywords:
+        raise HTTPException(status_code=400, detail="No keywords provided")
+    keywords = serper_client.add_tracked_keywords_bulk(body.site_url, body.keywords)
+    return {"site_url": body.site_url, "keywords": keywords, "added": len(body.keywords)}
+
+
 @app.get("/api/serper/rankings")
 def api_serper_rankings(site_url: str, _admin: str = Depends(get_current_admin)):
     """Read-only — returns the last cached check. Does NOT call Serper, so it's free to load."""

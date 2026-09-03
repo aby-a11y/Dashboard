@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>SEO Client Dashboard</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --bg: #0f1115;
@@ -730,7 +731,10 @@
 </div>
 
 <div id="accountsPanel" style="display:none; margin: 0 28px 24px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 20px; max-width:1300px; margin-left:auto; margin-right:auto;">
-  <div class="section-title">Google Accounts — GSC/GA4 secret JSON per account</div>
+  <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+  Google Accounts — GSC/GA4 secret JSON per account
+  <span onclick="toggleAccountsPanel()" style="cursor:pointer; color:var(--muted); font-size:16px; line-height:1;">✕</span>
+</div>
   <div style="color:var(--muted); font-size:13px; margin-bottom:14px;">
     Add a new Google account by uploading its OAuth <code>client_secret.json</code>.
     Switching the dropdown in the header (top-left) changes which account's
@@ -740,7 +744,7 @@
     <input type="text" id="acAccountId" placeholder="account_id (e.g. deyagmail)">
     <input type="text" id="acLabel" placeholder="Label (e.g. deya@gmail.com)">
     <input type="file" id="acClientSecretFile" accept="application/json">
-    <button onclick="addAccount()">Add Account</button>
+    <button onclick="addAccount()">Add Account</button>     
   </div>
   <div style="display:flex; gap:10px; margin-bottom:16px;">
     <span id="acStatus" style="color:var(--muted); font-size:13px; align-self:center;"></span>
@@ -853,7 +857,7 @@
   </div>
 
   <div class="chart-card">
-    <div class="section-title">🔍 Google Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span></div>
+    <div class="section-title">🔍 Google Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span> <a href="#" onclick="return exportSerperRankingsCsv()" style="float:right; font-size:12px; color:var(--accent);">Export to Excel (CSV)</a></div>
     <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
       <input type="text" id="newSerperKeywordInput" placeholder="Add a keyword to track..." style="flex:1; min-width:180px;" onkeydown="if(event.key==='Enter') addSerperKeyword()">
       <button onclick="addSerperKeyword()">Add</button>
@@ -861,6 +865,15 @@
       <input type="text" id="serperLocation" placeholder="Location (optional, e.g. Mumbai, Maharashtra, India)" style="width:260px;">
       <button onclick="refreshSerperRankings()" id="serperRefreshBtn" style="background:var(--accent2);">Check Rankings Now</button>
     </div>
+    <a href="#" onclick="return toggleSerperKeywordChips()" id="serperChipsToggle" style="font-size:12px; color:var(--accent); display:inline-block; margin-bottom:8px;">Tracked keywords ▾</a>
+    <div id="serperKeywordChips" style="margin-bottom:12px; display:none;"></div>
+    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:flex-start;">
+      <textarea id="bulkSerperKeywordInput" placeholder="Bulk add: paste keywords separated by commas or new lines..." style="flex:1; min-width:260px; min-height:36px; resize:vertical; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit;"></textarea>
+      <button onclick="bulkAddSerperKeywords()">Bulk Add</button>
+      <button onclick="document.getElementById('serperImportFile').click()" style="background:var(--accent2);">Import from CSV/Excel</button>
+      <input type="file" id="serperImportFile" accept=".csv,.txt,.xlsx,.xls" style="display:none;" onchange="importSerperKeywordsFile(event)">
+    </div>
+    <div id="serperKeywordError" style="display:none; color:#e5484d; font-size:12px; margin-bottom:10px;"></div>
     <div id="serperRankTable" class="loading">Loading...</div>
   </div>
 </main>
@@ -1481,8 +1494,13 @@ async function loadRankHistory(keyword) {
 
 let serperTrackedKeywords = [];
 
+let serperChipsVisible = false; // collapsed by default for a cleaner UI
+
 function renderSerperKeywordChips() {
   const el = document.getElementById("serperKeywordChips");
+  const toggle = document.getElementById("serperChipsToggle");
+  if (toggle) toggle.textContent = `Tracked keywords (${serperTrackedKeywords.length}) ${serperChipsVisible ? "▴" : "▾"}`;
+  el.style.display = serperChipsVisible ? "block" : "none";
   if (!serperTrackedKeywords.length) {
     el.innerHTML = `<div class="loading">No keywords tracked yet — add one above</div>`;
     return;
@@ -1492,6 +1510,55 @@ function renderSerperKeywordChips() {
       ${kw}
       <span onclick="removeSerperKeyword('${kw.replace(/'/g, "\\'")}')" style="cursor:pointer; color:#ff6b6b;">×</span>
     </span>`).join("");
+}
+
+function toggleSerperKeywordChips() {
+  serperChipsVisible = !serperChipsVisible;
+  renderSerperKeywordChips();
+  return false;
+}
+
+function parseKeywordsFromCsvText(text) {
+  // Accepts a plain keyword list OR a CSV with a header row / multiple
+  // columns — takes the first non-empty cell of each line as the keyword,
+  // skips a header row if it looks like one (e.g. "keyword", "keywords").
+  return text.split(/\r?\n/)
+    .map(line => line.split(",")[0].trim().replace(/^"|"$/g, ""))
+    .filter(kw => kw && !/^keywords?$/i.test(kw));
+}
+
+function importSerperKeywordsFile(event) {
+  const file = event.target.files[0];
+  event.target.value = ""; // allow re-selecting the same file later
+  if (!file) return;
+  const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+  const reader = new FileReader();
+  reader.onerror = () => showSerperKeywordError("Couldn't read the file.");
+  reader.onload = (e) => {
+    let keywords = [];
+    try {
+      if (isExcel) {
+        const workbook = XLSX.read(e.target.result, { type: "binary" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+        keywords = rows.map(r => (r[0] || "").toString().trim())
+          .filter(kw => kw && !/^keywords?$/i.test(kw));
+      } else {
+        keywords = parseKeywordsFromCsvText(e.target.result);
+      }
+    } catch (err) {
+      showSerperKeywordError(`Couldn't parse file: ${err.message || err}`);
+      return;
+    }
+    if (!keywords.length) {
+      showSerperKeywordError("No keywords found in that file.");
+      return;
+    }
+    document.getElementById("bulkSerperKeywordInput").value = keywords.join("\n");
+    bulkAddSerperKeywords();
+  };
+  if (isExcel) reader.readAsBinaryString(file);
+  else reader.readAsText(file);
 }
 
 async function loadSerperTrackedKeywords() {
@@ -1504,15 +1571,37 @@ async function loadSerperTrackedKeywords() {
   renderSerperKeywordChips();
 }
 
-async function saveSerperTrackedKeywords() {
+function showSerperKeywordError(msg) {
+  const el = document.getElementById("serperKeywordError");
+  if (!msg) { el.style.display = "none"; el.textContent = ""; return; }
+  el.textContent = msg;
+  el.style.display = "block";
+}
+
+async function saveSerperTrackedKeywords(previousKeywords) {
   renderSerperKeywordChips();
   try {
-    await fetch(`${API}/api/serper/tracked-keywords`, {
+    const res = await fetch(`${API}/api/serper/tracked-keywords`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ site_url: currentSite(), keywords: serperTrackedKeywords }),
     });
-  } catch (e) { /* resync next load */ }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      // Save actually failed on the backend — roll the UI back so the chip
+      // list doesn't lie about what got persisted, and surface why.
+      if (previousKeywords) serperTrackedKeywords = previousKeywords;
+      renderSerperKeywordChips();
+      showSerperKeywordError(`Couldn't save keywords: ${parseApiError(body, res.statusText)}`);
+      return;
+    }
+    showSerperKeywordError(null);
+  } catch (e) {
+    if (previousKeywords) serperTrackedKeywords = previousKeywords;
+    renderSerperKeywordChips();
+    showSerperKeywordError(`Couldn't save keywords: ${e.message || "network error"}`);
+    return;
+  }
   loadSerperRankings();
 }
 
@@ -1522,13 +1611,42 @@ function addSerperKeyword() {
   input.value = "";
   if (!kw) return;
   if (serperTrackedKeywords.some(k => k.toLowerCase() === kw.toLowerCase())) return;
+  const previous = serperTrackedKeywords.slice();
   serperTrackedKeywords.push(kw);
-  saveSerperTrackedKeywords();
+  saveSerperTrackedKeywords(previous);
 }
 
 function removeSerperKeyword(kw) {
+  const previous = serperTrackedKeywords.slice();
   serperTrackedKeywords = serperTrackedKeywords.filter(k => k !== kw);
-  saveSerperTrackedKeywords();
+  saveSerperTrackedKeywords(previous);
+}
+
+async function bulkAddSerperKeywords() {
+  const input = document.getElementById("bulkSerperKeywordInput");
+  const raw = input.value.trim();
+  if (!raw) return;
+  const newKeywords = raw.split(/[\n,]+/).map(k => k.trim()).filter(Boolean);
+  if (!newKeywords.length) return;
+  try {
+    const res = await fetch(`${API}/api/serper/tracked-keywords/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site_url: currentSite(), keywords: newKeywords }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showSerperKeywordError(`Bulk add failed: ${parseApiError(body, res.statusText)}`);
+      return;
+    }
+    serperTrackedKeywords = body.keywords;
+    input.value = "";
+    showSerperKeywordError(null);
+    renderSerperKeywordChips();
+    loadSerperRankings();
+  } catch (e) {
+    showSerperKeywordError(`Bulk add failed: ${e.message || "network error"}`);
+  }
 }
 
 function timeAgo(isoString) {
@@ -1541,18 +1659,65 @@ function timeAgo(isoString) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function renderSerperChange(r) {
+  if (r.change === null || r.change === undefined) return `<span style="color:var(--muted);">—</span>`;
+  if (r.change === 0) return `<span style="color:var(--muted);">No change</span>`;
+  // convention: negative change = position number went down = improved
+  const improved = r.change < 0;
+  const arrow = improved ? "▲" : "▼";
+  const color = improved ? "#2ecc71" : "#e5484d";
+  return `<span style="color:${color};">${arrow} ${Math.abs(r.change)}</span>`;
+}
+
+function csvEscape(val) {
+  const s = val === null || val === undefined ? "" : String(val);
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function exportSerperRankingsCsv() {
+  if (!lastSerperRows.length) {
+    alert("No ranking data to export yet — check rankings first.");
+    return false;
+  }
+  const header = ["Keyword", "Position", "Previous Position", "Change", "Matched URL", "Last Checked"];
+  const lines = [header.map(csvEscape).join(",")];
+  for (const r of lastSerperRows) {
+    lines.push([
+      r.keyword,
+      r.found === null ? "" : (r.found ? r.position : "Not in top 100"),
+      r.previous_position != null ? r.previous_position : "",
+      r.change != null ? r.change : "",
+      r.url || "",
+      r.checked_at || "",
+    ].map(csvEscape).join(","));
+  }
+  const csv = lines.join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  const siteName = currentSite().replace(/[^a-z0-9]+/gi, "_");
+  link.download = `google_rankings_${siteName}_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  return false;
+}
+
 function renderSerperTable(rows) {
   if (!rows.length) return `<div class="loading">No keywords tracked yet — add some above</div>`;
   return `
     <table>
       <thead><tr>
-        <th>Keyword</th><th class="num">Position</th><th>Matched URL</th><th>Last Checked</th>
+        <th>Keyword</th><th class="num">Position</th><th class="num">Previous</th><th class="num">Change</th><th>Matched URL</th><th>Last Checked</th>
       </tr></thead>
       <tbody>
         ${rows.map(r => `
           <tr>
             <td title="${r.keyword}">${r.keyword}</td>
             <td class="num">${r.found === null ? "—" : (r.found ? r.position : "Not in top 100")}</td>
+            <td class="num" style="color:var(--muted);">${r.previous_position != null ? r.previous_position : "—"}</td>
+            <td class="num">${renderSerperChange(r)}</td>
             <td style="font-size:12px; color:var(--muted);" title="${r.url || ''}">${r.url ? r.url.slice(0, 40) : "—"}</td>
             <td style="font-size:12px; color:var(--muted);">${timeAgo(r.checked_at)}</td>
           </tr>`).join("")}
@@ -1560,10 +1725,13 @@ function renderSerperTable(rows) {
     </table>`;
 }
 
+let lastSerperRows = [];
+
 async function loadSerperRankings() {
   const el = document.getElementById("serperRankTable");
   try {
     const d = await fetchJSON(`${API}/api/serper/rankings?site_url=${encodeURIComponent(currentSite())}`);
+    lastSerperRows = d.rows;
     el.innerHTML = renderSerperTable(d.rows);
   } catch (e) { el.innerHTML = `<div class="error">${e.message}</div>`; }
 }
@@ -1588,6 +1756,7 @@ async function refreshSerperRankings() {
       throw new Error(body.detail || res.statusText);
     }
     const d = await res.json();
+    lastSerperRows = d.rows;
     el.innerHTML = renderSerperTable(d.rows);
   } catch (e) {
     el.innerHTML = `<div class="error">${e.message}</div>`;
