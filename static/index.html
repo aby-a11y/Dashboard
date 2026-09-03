@@ -353,7 +353,7 @@
         Share Dashboard —
         <span id="shareSiteLabel" style="color:var(--accent);"></span>
       </div>
-      <button onclick="closeShareModal()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+      <button onclick="closeShareModal()" style="background:transparent; border:none; padding:4px 10px; font-size:16px; color:var(--text); cursor:pointer;">✕</button>
     </div>
 
     <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">
@@ -413,9 +413,9 @@
         <span id="wfSiteLabel" style="color:var(--accent);"></span>
       </div>
 
-      <button onclick="closeWorkflowModal()" style="background:transparent; padding:4px 10px; font-size:16px;">
-        ✕
-      </button>
+      <button onclick="closeWorkflowModal()" style="background:transparent; border:none; padding:4px 10px; font-size:16px; color:var(--text); cursor:pointer;">
+  ✕
+</button>
     </div>
 
     <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:16px;">
@@ -654,7 +654,7 @@
   <div class="workflow-modal">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
       <div class="section-title" style="margin:0;">Bulk Monthly Schedule</div>
-      <button onclick="closeBulkModal()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+      <button onclick="toggleClientAccessPanel()" style="background:transparent; border:none; padding:4px 10px; font-size:16px; color:var(--text); cursor:pointer;">✕</button>
     </div>
     <div style="color:var(--muted); font-size:12px; margin-bottom:14px;">
       Select clients below. Sends are auto-spread across days so it doesn't look like a spam blast — e.g. 100 clients at a batch size of 25 go out over 4 days, a few minutes apart within each day.
@@ -751,7 +751,7 @@
 <div id="clientAccessPanel" style="display:none; margin: 0 28px 24px; background:var(--card); border:1px solid var(--border); border-radius:12px; padding:18px 20px; max-width:1300px; margin-left:auto; margin-right:auto;">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0;">
     <div class="section-title" style="margin:0;">Client Access — logins &amp; report links</div>
-    <button onclick="toggleClientAccessPanel()" style="background:transparent; padding:4px 10px; font-size:16px;">✕</button>
+    <button onclick="toggleClientAccessPanel()" style="background:transparent; border:none; padding:4px 10px; font-size:16px; color:var(--text); cursor:pointer;">✕</button>
   </div>
   <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap:10px; margin-bottom:12px;">
     <input type="text" id="caClientId" placeholder="Client ID (login username)">

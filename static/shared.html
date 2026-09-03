@@ -6,6 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>SEO Dashboard — Shared Report</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
   :root {
     --bg: #0f1115;
@@ -28,6 +29,7 @@
   * { box-sizing: border-box; }
   body {
     margin: 0;
+    overflow-x: hidden;   /* safety net: nothing can ever force horizontal scroll on mobile */
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
@@ -54,10 +56,33 @@
   button:hover { opacity: 0.85; }
   main { padding: 24px 28px; max-width: 1300px; margin: 0 auto; }
   h2.section-heading {
-    font-size: 15px; color: var(--muted); margin: 30px 0 10px;
-    text-transform: uppercase; letter-spacing: 0.05em;
+    font-size: 13px; color: #fff; margin: 22px 0 0;
+    text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
+    background: #1f2933; padding: 8px 14px; border-radius: 6px 6px 0 0;
   }
   h2.section-heading:first-child { margin-top: 0; }
+  /* everything directly after a section heading, up to the next one, reads as one grouped block */
+  h2.section-heading + .summary-grid,
+  h2.section-heading + .grid-2,
+  h2.section-heading + .chart-card {
+    border-top: none; border-radius: 0 0 10px 10px;
+  }
+  .report-title-bar {
+    background: linear-gradient(90deg, var(--accent), #1f6fd6);
+    color: #fff; font-weight: 700; font-size: 16px;
+    padding: 12px 18px; border-radius: 8px; margin-bottom: 20px; text-align: center;
+  }
+  .section-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; min-width: 0; }
+  .section-pair .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .section-block, .grid-2 > .chart-card, .chart-card { min-width: 0; }
+  .chart-card.grouped { margin-bottom: 0; border-radius: 0 0 10px 10px; }
+  canvas { max-width: 100%; }
+  .donut-center {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; pointer-events: none;
+  }
+  .donut-center .n { font-size: 20px; font-weight: 700; }
+  .donut-center .l { font-size: 10px; color: var(--muted); text-transform: uppercase; }
   .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -85,6 +110,226 @@
   .loading, .error, .empty { color: var(--muted); padding: 20px; text-align: center; font-size: 13px; }
   .error { color: #ff6b6b; }
   .donut-wrap { position: relative; height: 220px; }
+  .trend-wrap { position: relative; height: 220px; }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .table-scroll table { min-width: 480px; }
+  #pdfBtn { display: inline-flex; align-items: center; gap: 6px; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  #pdfBtn:disabled { opacity: 0.6; cursor: default; }
+  .pdf-page-break { break-before: page; page-break-before: always; }
+
+  /* ---- Mobile: force the complete report into one viewport ---- */
+  @media (max-width: 640px) {
+    body.mobile-one-page {
+      overflow: hidden !important;
+    }
+
+    body.mobile-one-page #app {
+      transform-origin: top left;
+      width: 100vw;
+      will-change: transform;
+    }
+
+    body.mobile-one-page #app > footer {
+      display: block;
+    }
+  }
+
+  /* ---- Mobile: compact one-screen report layout ----
+     Keep the report structure side-by-side instead of stacking it.
+     This makes the phone view behave like a shrunken client report,
+     matching the compact dashboard style used in the mobile reference. */
+  @media (max-width: 640px) {
+    html, body { width: 100%; max-width: 100%; }
+    body { overflow-x: hidden; }
+
+    header {
+      padding: 5px 7px;
+      gap: 4px;
+      flex-wrap: nowrap;
+      min-height: 38px;
+    }
+
+    header h1 {
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+
+    .controls {
+      width: auto;
+      flex: 0 0 auto;
+      gap: 3px;
+      flex-wrap: nowrap;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      padding: 3px 5px;
+      font-size: 7px;
+      border-radius: 10px;
+      white-space: nowrap;
+    }
+
+    button {
+      padding: 4px 6px;
+      font-size: 8px;
+      border-radius: 5px;
+    }
+
+    main { padding: 4px; }
+
+    .report-title-bar {
+      font-size: 9px;
+      line-height: 1.15;
+      padding: 5px 6px;
+      margin-bottom: 5px;
+      border-radius: 4px;
+    }
+
+    h2.section-heading {
+      font-size: 8px;
+      line-height: 1;
+      margin: 5px 0 0;
+      padding: 4px 6px;
+      border-radius: 3px 3px 0 0;
+      letter-spacing: .03em;
+    }
+
+    h2.section-heading:first-child { margin-top: 0; }
+
+    .section-pair {
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      margin-bottom: 5px;
+    }
+
+    .section-pair .summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .summary-grid {
+      gap: 1px;
+      margin-bottom: 5px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 0 0 4px 4px;
+      overflow: hidden;
+    }
+
+    #trafficSummaryGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .stat-card {
+      padding: 3px 3px;
+      min-width: 0;
+      border-radius: 0;
+      border: none;
+    }
+
+    .stat-card .label {
+      font-size: 6px;
+      line-height: 1.05;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .stat-card .value {
+      font-size: 10px;
+      line-height: 1.05;
+      margin-top: 2px;
+      white-space: nowrap;
+    }
+
+    .stat-card .value span {
+      display: inline !important;
+      margin-left: 1px !important;
+      margin-top: 0 !important;
+      font-size: 6px !important;
+    }
+
+    .chart-card {
+      padding: 4px;
+      margin-bottom: 5px;
+      border-radius: 4px;
+    }
+
+    .chart-card.grouped {
+      padding: 3px;
+      border-radius: 0 0 4px 4px;
+    }
+
+    h2.section-heading + .chart-card { margin-top: 0; }
+
+    .section-title {
+      font-size: 8px;
+      line-height: 1;
+      margin-bottom: 3px;
+    }
+
+    /* Keep the two-column report cards on phones. */
+    .grid-2 {
+      grid-template-columns: 1fr 1fr;
+      gap: 2px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 5px;
+    }
+
+    .grid-2 .chart-card {
+      margin-bottom: 0;
+      border-radius: 0;
+      border: none;
+      min-width: 0;
+    }
+
+    canvas {
+      max-width: 100% !important;
+      max-height: none !important;
+    }
+
+    .trend-wrap { height: 65px; }
+    .donut-wrap { height: 65px; }
+
+    .donut-center .n { font-size: 9px; }
+    .donut-center .l { font-size: 5px; }
+
+    table {
+      width: 100%;
+      font-size: 7px;
+      line-height: 1.05;
+    }
+
+    th, td {
+      padding: 2px 3px;
+      white-space: nowrap;
+      max-width: 90px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    th { font-size: 6px; }
+
+    .table-scroll {
+      overflow-x: hidden;
+      width: 100%;
+    }
+
+    .table-scroll table { min-width: 0; }
+
+    #rankTrackerCard,
+    #serperRankCard { margin-bottom: 5px; }
+
+    #rankTrackerCard .section-title,
+    #serperRankCard .section-title { font-size: 8px; }
+
+    footer {
+      padding: 5px 4px 8px;
+      font-size: 6px;
+      line-height: 1.1;
+    }
+  }
   #expiredScreen {
     display: none; min-height: 70vh; align-items: center; justify-content: center;
     flex-direction: column; text-align: center; padding: 40px 20px; gap: 10px;
@@ -93,6 +338,20 @@
   #expiredScreen h2 { margin: 0; font-size: 18px; }
   #expiredScreen p { color: var(--muted); font-size: 13px; max-width: 380px; margin: 0; }
   footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px 28px 32px; }
+
+  @media (max-width: 640px) {
+  body.mobile-one-page {
+    overflow: hidden !important;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+  }
+
+  body.mobile-one-page #app {
+    transform-origin: top center !important;
+    margin: 0 auto !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -108,22 +367,32 @@
   <header>
     <h1>📊 <span id="siteLabel">SEO Dashboard</span></h1>
     <div class="controls">
+      <button id="pdfBtn" onclick="downloadPdf()" title="Save this report as a PDF" aria-label="Download PDF">⬇️ PDF</button>
       <button id="themeToggleBtn" onclick="toggleTheme()" title="Toggle light/dark mode" aria-label="Toggle theme">🌙</button>
       <span class="badge" id="rangeBadge"></span>
     </div>
   </header>
 
   <main>
-    <h2 class="section-heading" id="ga4Heading" style="display:none;">Google Analytics</h2>
-    <div class="summary-grid" id="ga4SummaryGrid" style="display:none;"></div>
-    <div class="grid-2" id="ga4ChartsRow" style="display:none;">
-      <div class="chart-card">
-        <div class="section-title">Active Users &amp; Sessions Trend</div>
-        <canvas id="ga4TrendChart" height="140"></canvas>
+    <div class="report-title-bar" id="reportTitleBar" style="display:none;"></div>
+
+    <div class="section-pair" id="ga4Section" style="display:none;">
+      <div class="section-block">
+        <h2 class="section-heading">Google Analytics</h2>
+        <div class="chart-card grouped">
+          <div class="summary-grid" id="ga4SummaryGrid"></div>
+          <div class="trend-wrap" style="margin-top:10px;"><canvas id="ga4TrendChart"></canvas></div>
+        </div>
       </div>
-      <div class="chart-card">
-        <div class="section-title">Traffic Sources</div>
-        <div class="donut-wrap"><canvas id="ga4TrafficChart"></canvas></div>
+      <div class="section-block">
+        <h2 class="section-heading">Traffic</h2>
+        <div class="chart-card grouped">
+          <div class="donut-wrap" id="trafficDonutWrap" style="position:relative;">
+            <canvas id="ga4TrafficChart"></canvas>
+            <div class="donut-center" id="ga4VisitorsCenter"></div>
+          </div>
+          <div class="summary-grid" id="trafficSummaryGrid" style="margin-top:10px;"></div>
+        </div>
       </div>
     </div>
     <div class="chart-card" id="ga4PagesCard" style="display:none;">
@@ -136,7 +405,7 @@
 
     <div class="chart-card">
       <div class="section-title">Clicks &amp; Impressions Trend</div>
-      <canvas id="trendChart" height="80"></canvas>
+      <div class="trend-wrap"><canvas id="trendChart"></canvas></div>
     </div>
 
     <div class="grid-2">
@@ -163,7 +432,7 @@
 
   
 
-    <div class="chart-card" id="rankTrackerCard" style="display:none;">
+    <div class="chart-card pdf-page-break" id="rankTrackerCard" style="display:none;">
       <div class="section-title">🔍 Keyword Rank Tracker</div>
       <div id="rankTrackerTable" class="loading">Loading…</div>
     </div>
@@ -238,7 +507,7 @@ function renderTable(containerId, rows, columns, emptyMsg = "No data for this ra
   const body = rows.map(r => `<tr>${columns.map(c =>
     `<td class="${c.num ? 'num' : ''}" ${c.title ? `title="${r[c.key]}"` : ''}>${c.fmt ? c.fmt(r[c.key]) : (r[c.key] ?? "")}</td>`
   ).join("")}</tr>`).join("");
-  el.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  el.innerHTML = `<div class="table-scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
 /* ---- GSC: summary + comparison ---- */
@@ -249,6 +518,9 @@ async function loadSummary() {
     document.getElementById("siteLabel").textContent = d.site_url;
     document.getElementById("rangeBadge").textContent =
       d.start_date === d.end_date ? d.start_date : `${d.start_date} → ${d.end_date}`;
+    const bar = document.getElementById("reportTitleBar");
+    bar.textContent = `${(d.site_url || "").replace(/^https?:\/\//, "").replace(/\/$/, "")} — Dashboard`;
+    bar.style.display = "block";
 
     const chg = (d.comparison && d.comparison.change) || {};
     const arrow = (v, invert = false) => {
@@ -298,6 +570,7 @@ async function loadTrend() {
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         scales: {
           y: { position: "left", ticks: { color: c.muted }, grid: { color: c.border } },
@@ -496,22 +769,23 @@ async function loadGa4() {
   } catch (e) { return; }
   if (!summary.available) return;
 
-  document.getElementById("ga4Heading").style.display = "block";
-  document.getElementById("ga4SummaryGrid").style.display = "grid";
-  document.getElementById("ga4ChartsRow").style.display = "grid";
+  document.getElementById("ga4Section").style.display = "grid";
   document.getElementById("ga4PagesCard").style.display = "block";
 
   const mins = Math.floor((summary.avg_session_duration || 0) / 60);
   const secs = Math.round((summary.avg_session_duration || 0) % 60);
   document.getElementById("ga4SummaryGrid").innerHTML = `
     <div class="stat-card"><div class="label">New Users</div><div class="value">${num(summary.new_users)}</div></div>
-    <div class="stat-card"><div class="label">Total Users</div><div class="value">${num(summary.total_users)}</div></div>
-    <div class="stat-card"><div class="label">Sessions</div><div class="value">${num(summary.sessions)}</div></div>
-    <div class="stat-card"><div class="label">Views</div><div class="value">${num(summary.views)}</div></div>
     <div class="stat-card"><div class="label">Bounce Rate</div><div class="value">${pct(summary.bounce_rate)}</div></div>
-    <div class="stat-card"><div class="label">Engagement Rate</div><div class="value">${pct(summary.engagement_rate)}</div></div>
-    <div class="stat-card"><div class="label">Avg. Engagement Time</div><div class="value">${mins}:${String(secs).padStart(2,'0')}</div></div>
+    <div class="stat-card"><div class="label">Events/Session</div><div class="value">${summary.events_per_session ?? "—"}</div></div>
+    <div class="stat-card"><div class="label">Avg. Engagement</div><div class="value">${mins}:${String(secs).padStart(2,'0')}</div></div>
   `;
+  document.getElementById("trafficSummaryGrid").innerHTML = `
+    <div class="stat-card"><div class="label">Total Users</div><div class="value">${num(summary.total_users)}</div></div>
+    <div class="stat-card"><div class="label">Engagement Rate</div><div class="value">${pct(summary.engagement_rate)}</div></div>
+  `;
+  document.getElementById("ga4VisitorsCenter").innerHTML =
+    `<div class="n">${num(summary.sessions)}</div><div class="l">Sessions</div>`;
 
   try {
     const d = await fetchShared("ga4/trend");
@@ -528,6 +802,7 @@ async function loadGa4() {
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         scales: {
           y: { ticks: { color: c.muted }, grid: { color: c.border } },
           x: { ticks: { color: c.muted }, grid: { color: c.border } },
@@ -546,7 +821,7 @@ async function loadGa4() {
         labels: d.rows.map(r => r.channel),
         datasets: [{ data: d.rows.map(r => r.sessions), backgroundColor: ["#4f8cff", "#33c17a", "#f5a623", "#e05d5d", "#a566ff", "#26c6da"] }],
       },
-      options: { maintainAspectRatio: false, radius: "100%", plugins: { legend: donutLegend() } },
+      options: { maintainAspectRatio: false, radius: "100%", cutout: "65%", plugins: { legend: donutLegend() } },
     });
   } catch (e) { /* non-fatal */ }
 
@@ -560,10 +835,46 @@ async function loadGa4() {
   } catch (e) { document.getElementById("ga4PagesTable").innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
-function toggleTheme() {
-  const isLight = document.body.classList.toggle('light');
-  localStorage.setItem('dashboardTheme', isLight ? 'light' : 'dark');
-  document.getElementById('themeToggleBtn').textContent = isLight ? '☀️' : '🌙';
+async function downloadPdf() {
+  const btn = document.getElementById("pdfBtn");
+  const themeBtn = document.getElementById("themeToggleBtn");
+  const originalBtnText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "⏳ Generating…";
+  btn.style.visibility = "hidden";      // hide the PDF/theme buttons from the captured PDF...
+  themeBtn.style.visibility = "hidden"; // ...but keep the site name + date-range badge visible
+
+  // PDF always renders in the light "report" theme, regardless of what's on screen —
+  // remembers whatever the viewer had selected so we can restore it after.
+  const wasLight = document.body.classList.contains('light');
+  if (!wasLight) { document.body.classList.add('light'); applyChartColors(); }
+
+  const filename = `${(document.getElementById("siteLabel").textContent || "seo-report").replace(/[^\w.-]+/g, "_")}.pdf`;
+
+  try {
+    await html2pdf()
+      .set({
+        margin: 6,
+        filename,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#f5f6f8" },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+        pagebreak: { mode: ["css", "avoid-all"] },
+      })
+      .from(document.getElementById("app"))
+      .save();
+  } catch (e) {
+    alert("Couldn't generate the PDF: " + e.message);
+  } finally {
+    if (!wasLight) { document.body.classList.remove('light'); applyChartColors(); }
+    btn.style.visibility = "visible";
+    themeBtn.style.visibility = "visible";
+    btn.disabled = false;
+    btn.textContent = originalBtnText;
+  }
+}
+
+function applyChartColors() {
   const c = chartColors();
   [trendChart, ga4TrendChart].forEach(chart => {
     if (!chart) return;
@@ -579,9 +890,61 @@ function toggleTheme() {
   });
 }
 
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light');
+  localStorage.setItem('dashboardTheme', isLight ? 'light' : 'dark');
+  document.getElementById('themeToggleBtn').textContent = isLight ? '☀️' : '🌙';
+  applyChartColors();
+}
+
+/* ---- Mobile one-page fit ----
+   After the API content is rendered, scale the whole report so its
+   complete height fits inside the phone viewport. Desktop is untouched. */
+function fitMobileOnePage() {
+  const app = document.getElementById("app");
+  if (!app || window.innerWidth > 640 || app.style.display === "none") return;
+
+  document.body.classList.add("mobile-one-page");
+  app.style.transform = "none";
+
+  // Measure the complete unscaled report.
+  const reportWidth = Math.max(app.scrollWidth, document.documentElement.clientWidth);
+  const reportHeight = app.scrollHeight;
+
+  const availableWidth = window.innerWidth;
+  // Keep a small breathing room at the bottom for mobile browser viewport.
+  const availableHeight = Math.max(320, window.innerHeight - 4);
+
+  const scaleX = availableWidth / reportWidth;
+  const scaleY = availableHeight / reportHeight;
+  const scale = Math.min(1, scaleX, scaleY);
+
+  app.style.position = "relative";
+app.style.left = "50%";
+app.style.transform = `translateX(-50%) scale(${scale})`;
+app.style.transformOrigin = "top center";
+  // Prevent the original unscaled height from creating a scrollable page.
+  document.body.style.height = `${Math.ceil(reportHeight * scale)}px`;
+  document.documentElement.style.height = `${Math.ceil(reportHeight * scale)}px`;
+}
+
+let mobileFitTimer;
+function scheduleMobileFit() {
+  if (window.innerWidth > 640) return;
+  clearTimeout(mobileFitTimer);
+  mobileFitTimer = setTimeout(fitMobileOnePage, 150);
+}
+
+window.addEventListener("resize", scheduleMobileFit);
+window.addEventListener("orientationchange", () => setTimeout(fitMobileOnePage, 250));
+
 async function loadAll() {
   const ok = await loadSummary();
   if (!ok) return; // link expired/invalid — already showing the expired screen
+
+  // Initial fit, then refit while async sections/charts/tables arrive.
+  scheduleMobileFit();
+
   loadTrend();
   loadQueries();
   loadPages();
@@ -591,6 +954,11 @@ async function loadAll() {
   loadRankTracker();
   loadSerperRankings();
   loadGa4();
+
+  // These delays cover the API responses and Chart.js rendering.
+  [300, 800, 1500, 2500, 4000].forEach(ms => {
+    setTimeout(scheduleMobileFit, ms);
+  });
 }
 
 if (!token) {
