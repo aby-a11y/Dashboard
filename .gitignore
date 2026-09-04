@@ -19,4 +19,3 @@ report_emails.json
 email_workflows.json
 jobs.sqlite
 share_jwt_secret.txt
-share_auth.py
