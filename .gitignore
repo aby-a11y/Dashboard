@@ -18,4 +18,4 @@ jwt_secret.txt
 report_emails.json
 email_workflows.json
 jobs.sqlite
-jwt_secret.txt
+share_jwt_secret.txt
