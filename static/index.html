@@ -343,6 +343,10 @@
       <span class="mm-icon">📅</span>
       <span><span class="mm-label">Bulk Monthly Schedule</span><span class="mm-sub">Auto-spread sends across clients &amp; days</span></span>
     </button>
+    <button class="more-menu-item" onclick="logoutAdmin();" style="border-top:1px solid var(--border); margin-top:6px; padding-top:14px;">
+  <span class="mm-icon">🚪</span>
+  <span><span class="mm-label">Logout</span><span class="mm-sub">Sign out of the admin panel</span></span>
+</button>
   </div>
 </div>
 
@@ -762,7 +766,7 @@
     <input type="password" id="caPassword" placeholder="Password (leave blank to keep existing)">
     <input type="text" id="caSiteUrl" placeholder="Site URL (as in GSC, e.g. sc-domain:example.com)">
     <input type="text" id="caName" placeholder="Display name (optional)">
-    <input type="text" id="caGa4PropertyId" placeholder="GA4 Property ID (optional)">
+    <input type="text" id="caGa4PropertyId" placeholder="GA4 Property ID">
   </div>
   <div style="display:flex; gap:10px; margin-bottom:16px;">
     <button onclick="saveClientAccess()">Save Client Login</button>
@@ -1940,6 +1944,12 @@ function closeMoreMenu() {
 }
 function moreMenuEscHandler(e) {
   if (e.key === 'Escape') closeMoreMenu();
+}
+
+function logoutAdmin() {
+  if (!confirm('Log out of the admin panel?')) return;
+  localStorage.removeItem('admin_token');
+  window.location.href = '/admin-login';
 }
 
 function toggleClientAccessPanel() {

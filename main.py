@@ -29,7 +29,12 @@ from pdf_report import generate_pdf
 from fastapi.responses import StreamingResponse
 import admin_auth
 
-app = FastAPI(title="SEO Client Dashboard API")
+app = FastAPI(
+    title="SEO Client Dashboard API",
+    docs_url=None,      # /docs disable
+    redoc_url=None,     # /redoc disable
+    openapi_url=None    # /openapi.json disable
+)
 
 app.add_middleware(
     CORSMiddleware,

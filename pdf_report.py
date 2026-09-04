@@ -20,6 +20,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import gsc_client
 import ga4_client
 import serper_client
+from country_names import COUNTRY_NAMES
 
 BLUE = colors.HexColor("#2f8fd6")
 DARK = colors.HexColor("#1f2933")
@@ -28,8 +29,6 @@ ROW_ALT = colors.HexColor("#f2f4f7")
 GREEN = colors.HexColor("#33c17a")
 RED = colors.HexColor("#d84343")
 
-# Matches the dashboard's own light-theme card look (white card, thin border,
-# muted uppercase label, bold dark value) instead of a flat solid-color box.
 CARD_BG = colors.HexColor("#ffffff")
 CARD_BORDER = colors.HexColor("#dfe2e7")
 CARD_TEXT = colors.HexColor("#1a1d23")
@@ -115,6 +114,31 @@ def _line_chart_image(x_labels, series, labels, hex_colors):
     plt.close(fig)
     buf.seek(0)
     return buf
+
+
+def _trend_with_totals(img, chart_w, chart_h, entries):
+    """Places the trend chart next to a small side panel of period totals —
+    one line per series, a colored dot matching that line's color, so the
+    reader gets the actual numbers at a glance instead of having to read
+    them off the chart (hard to do precisely on a line graph)."""
+    lines = []
+    for label, value, hex_color in entries:
+        lines.append(
+            f"<font color='{hex_color}'>●</font> "
+            f"<font size=7 color='{CARD_MUTED_HEX}'>{label.upper()}</font><br/>"
+            f"<font size=13 color='{CARD_TEXT_HEX}'><b>{value}</b></font>"
+        )
+    side = Paragraph("<br/><br/>".join(lines), _styles["Normal"])
+    side_w = 170 * mm - chart_w
+    t = Table([[Image(img, width=chart_w, height=chart_h), side]],
+              colWidths=[chart_w, side_w])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (1, 0), (1, 0), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return t
 
 
 def _donut_image(labels, values, hex_colors):
@@ -246,7 +270,10 @@ def generate_pdf(site_url, property_id, start_date, end_date):
             sessions = [r["sessions"] for r in trend]
             img = _line_chart_image(dates, [users, sessions], ["Active Users", "Sessions"],
                                      ["#2f8fd6", "#f5a623"])
-            elems.append(Image(img, width=170 * mm, height=58 * mm))
+            elems.append(_trend_with_totals(img, 130 * mm, 55 * mm, [
+                ("Active Users", ga["total_users"], "#2f8fd6"),
+                ("Sessions", ga["sessions"], "#f5a623"),
+            ]))
         elems.append(Spacer(1, 4 * mm))
 
         traffic = ga4_client.get_traffic_sources(property_id, start_date, end_date)
@@ -286,7 +313,10 @@ def generate_pdf(site_url, property_id, start_date, end_date):
         impressions = [r["impressions"] for r in trend]
         img = _line_chart_image(dates, [clicks, impressions], ["Clicks", "Impressions"],
                                  ["#2f8fd6", "#33c17a"])
-        elems.append(Image(img, width=170 * mm, height=58 * mm))
+        elems.append(_trend_with_totals(img, 130 * mm, 55 * mm, [
+            ("Clicks", gsc["clicks"], "#2f8fd6"),
+            ("Impressions", gsc["impressions"], "#33c17a"),
+        ]))
     elems.append(Spacer(1, 4 * mm))
 
     queries = gsc_client.get_queries(site_url, start_date, end_date, limit=20)
@@ -336,7 +366,8 @@ def generate_pdf(site_url, property_id, start_date, end_date):
     countries = gsc_client.get_countries(site_url, start_date, end_date, limit=15)
     if countries:
         elems.append(_sub_title("Top Countries"))
-        rows = [[c["country"], c["clicks"], c["impressions"], f'{c["ctr"]}%', c["position"]]
+        rows = [[COUNTRY_NAMES.get(c["country"].lower(), c["country"].upper()),
+                 c["clicks"], c["impressions"], f'{c["ctr"]}%', c["position"]]
                 for c in countries]
         elems.append(_data_table(["Country", "Clicks", "Impr.", "CTR", "Pos."], rows,
                                   [80 * mm, 22 * mm, 22 * mm, 22 * mm, 22 * mm]))
