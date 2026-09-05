@@ -278,6 +278,49 @@
 .email-editor:focus {
   border-color: var(--accent);
 }
+
+/* iOS-style toggle switch, used by Auto Rank Refresh etc. */
+.tswitch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.tswitch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.tswitch .tslider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background-color: var(--border);
+  transition: 0.2s;
+  border-radius: 24px;
+}
+.tswitch .tslider:before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #fff;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+.tswitch input:checked + .tslider {
+  background-color: var(--accent);
+}
+.tswitch input:checked + .tslider:before {
+  transform: translateX(18px);
+}
+.tswitch input:disabled + .tslider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 </style>
 </head>
 <body>
@@ -364,16 +407,33 @@
     </div>
 
     <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">
-      When on, this site's tracked keywords are checked on Google (via Serper) every 7 days on their
-      own — the new ranking replaces the previous one automatically, same as clicking "Check Rankings
-      Now" yourself. Turn it off any time to go back to manual-only checks.
+      When on, tracked keywords are checked on Google (via Serper) every 7 days on their own — the
+      new ranking replaces the previous one automatically, same as clicking "Check Rankings Now"
+      yourself.
     </p>
 
-    <label style="display:flex; align-items:center; gap:10px; font-size:13px; cursor:pointer; margin-bottom:10px;">
-      <input type="checkbox" id="autoRankToggle" onchange="toggleAutoRankRefresh()">
-      <span id="autoRankStatusLabel">Manual only</span>
-    </label>
-    <div id="autoRankNextRun" style="font-size:12px; color:var(--muted);"></div>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-size:13px;">This site only</div>
+        <div id="autoRankNextRun" style="font-size:12px; color:var(--muted);"></div>
+      </div>
+      <label class="tswitch">
+        <input type="checkbox" id="autoRankToggle" onchange="toggleAutoRankRefresh()">
+        <span class="tslider"></span>
+      </label>
+    </div>
+
+    <div style="margin-top:14px;">
+      <div style="font-size:13px; margin-bottom:2px;">Whole account</div>
+      <div id="autoRankAccountStatus" style="font-size:12px; color:var(--muted); margin-bottom:8px;">
+        Applies to every site under the currently active Google account.
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button onclick="bulkSetAutoRank(true)" id="autoRankEnableAllBtn" style="flex:1;">Enable for all sites</button>
+        <button onclick="bulkSetAutoRank(false)" id="autoRankDisableAllBtn" style="flex:1; background:var(--card); color:var(--text); border:1px solid var(--border);">Disable for all sites</button>
+      </div>
+      <div id="autoRankBulkResult" style="font-size:12px; color:var(--muted); margin-top:8px;"></div>
+    </div>
   </div>
 </div>
 
@@ -1758,6 +1818,7 @@ function renderSerperTable(rows) {
 
 function openAutoRankModal() {
   document.getElementById("autoRankSiteLabel").textContent = currentSite();
+  document.getElementById("autoRankBulkResult").textContent = "";
   document.getElementById("autoRankOverlay").style.display = "flex";
   loadAutoRankStatus();
 }
@@ -1768,9 +1829,8 @@ function closeAutoRankModal() {
 
 function renderAutoRankStatus(enabled, nextRunAt) {
   document.getElementById("autoRankToggle").checked = enabled;
-  document.getElementById("autoRankStatusLabel").textContent = enabled ? "Automatic (every 7 days)" : "Manual only";
   document.getElementById("autoRankNextRun").textContent =
-    enabled && nextRunAt ? `Next auto-refresh: ${new Date(nextRunAt).toLocaleString()}` : "";
+    enabled && nextRunAt ? `Next auto-refresh: ${new Date(nextRunAt).toLocaleString()}` : "Manual only";
 }
 
 async function loadAutoRankStatus() {
@@ -1778,13 +1838,14 @@ async function loadAutoRankStatus() {
     const d = await fetchJSON(`${API}/api/serper/auto-refresh?site_url=${encodeURIComponent(currentSite())}`);
     renderAutoRankStatus(d.enabled, d.next_run_at);
   } catch (e) {
-    document.getElementById("autoRankStatusLabel").textContent = `Couldn't load status: ${e.message || "network error"}`;
+    document.getElementById("autoRankNextRun").textContent = `Couldn't load status: ${e.message || "network error"}`;
   }
 }
 
 async function toggleAutoRankRefresh() {
   const enabled = document.getElementById("autoRankToggle").checked;
-  document.getElementById("autoRankStatusLabel").textContent = "Saving...";
+  const toggle = document.getElementById("autoRankToggle");
+  toggle.disabled = true;
   try {
     const res = await fetch(`${API}/api/serper/auto-refresh`, {
       method: "POST",
@@ -1797,6 +1858,32 @@ async function toggleAutoRankRefresh() {
   } catch (e) {
     renderAutoRankStatus(!enabled, null);
     alert(`Couldn't update auto rank refresh: ${e.message || "network error"}`);
+  } finally {
+    toggle.disabled = false;
+  }
+}
+
+async function bulkSetAutoRank(enabled) {
+  const label = enabled ? "Enabling" : "Disabling";
+  const resultEl = document.getElementById("autoRankBulkResult");
+  document.getElementById("autoRankEnableAllBtn").disabled = true;
+  document.getElementById("autoRankDisableAllBtn").disabled = true;
+  resultEl.textContent = `${label} for every site in this account...`;
+  try {
+    const res = await fetch(`${API}/api/serper/auto-refresh/bulk`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(parseApiError(body, res.statusText));
+    resultEl.textContent = `Done — ${enabled ? "enabled" : "disabled"} for ${body.sites.length} site(s) in this account.`;
+    loadAutoRankStatus(); // refresh the current site's own toggle in case it was included
+  } catch (e) {
+    resultEl.textContent = `Failed: ${e.message || "network error"}`;
+  } finally {
+    document.getElementById("autoRankEnableAllBtn").disabled = false;
+    document.getElementById("autoRankDisableAllBtn").disabled = false;
   }
 }
 

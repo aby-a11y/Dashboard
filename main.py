@@ -851,6 +851,27 @@ def api_serper_auto_refresh_set(body: SerperAutoRefreshBody, _admin: str = Depen
     return {"site_url": body.site_url, **email_scheduler.get_auto_rank_status(body.site_url)}
 
 
+class SerperAutoRefreshBulkBody(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/serper/auto-refresh/bulk")
+def api_serper_auto_refresh_bulk(body: SerperAutoRefreshBulkBody, _admin: str = Depends(get_current_admin)):
+    """Enables/disables auto rank refresh for every site under the currently
+    active Google account in one go (the 'Whole account' buttons in the
+    Auto Rank Refresh modal)."""
+    try:
+        sites = gsc_client.list_sites()
+    except (RuntimeError, HttpError) as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
+    for site_url in sites:
+        if body.enabled:
+            email_scheduler.enable_auto_rank_refresh(site_url)
+        else:
+            email_scheduler.disable_auto_rank_refresh(site_url)
+    return {"enabled": body.enabled, "sites": sites}
+
+
 # ---------------- GA4 endpoints ----------------
 
 @app.get("/api/ga4/summary")
