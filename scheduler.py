@@ -32,6 +32,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 import workflow_store
 import email_client
 import share_auth
+import serper_client
 
 REMINDER_GAP_HOURS = 24
 MAX_REMINDERS = 3
@@ -245,6 +246,60 @@ def cancel_workflow_jobs(workflow_id):
     for job in scheduler.get_jobs():
         if job.id.startswith(workflow_id):
             job.remove()
+
+
+# ---------------- Serper auto rank refresh (every 7 days, per site) ----------------
+#
+# Toggled from the admin panel's 3-dot menu ("Auto Rank Refresh"). When on,
+# every tracked keyword for that site is re-checked on Serper every 7 days
+# and the cache is overwritten — same as clicking "Check Rankings Now"
+# manually, just on autopilot. serper_client.refresh_rankings() already
+# carries the old position forward as previous_position, so the client and
+# admin tables keep showing current vs. previous automatically.
+#
+# The job is persisted in the same jobs.sqlite store as the email workflow
+# jobs, so it survives server restarts without any extra state file — the
+# toggle's on/off status IS whether the job exists.
+
+AUTO_RANK_INTERVAL_DAYS = 7
+
+
+def _auto_rank_job_id(site_url):
+    return f"autorank_{site_url}"
+
+
+def _run_auto_rank_refresh(site_url):
+    keywords = serper_client.get_tracked_keywords(site_url)
+    if not keywords:
+        return  # nothing tracked for this site — skip silently, don't error out the job
+    try:
+        serper_client.refresh_rankings(site_url, keywords)
+    except Exception:
+        # A transient Serper/network error shouldn't kill the recurring job —
+        # it'll just try again on the next 7-day tick.
+        pass
+
+
+def enable_auto_rank_refresh(site_url):
+    job = scheduler.add_job(
+        _run_auto_rank_refresh, "interval", days=AUTO_RANK_INTERVAL_DAYS,
+        args=[site_url], id=_auto_rank_job_id(site_url), replace_existing=True,
+    )
+    return job.next_run_time
+
+
+def disable_auto_rank_refresh(site_url):
+    job_id = _auto_rank_job_id(site_url)
+    if scheduler.get_job(job_id):
+        scheduler.remove_job(job_id)
+
+
+def get_auto_rank_status(site_url):
+    job = scheduler.get_job(_auto_rank_job_id(site_url))
+    return {
+        "enabled": job is not None,
+        "next_run_at": job.next_run_time.isoformat() if job else None,
+    }
 
 
 def start():

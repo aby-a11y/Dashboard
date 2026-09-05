@@ -343,10 +343,37 @@
       <span class="mm-icon">📅</span>
       <span><span class="mm-label">Bulk Monthly Schedule</span><span class="mm-sub">Auto-spread sends across clients &amp; days</span></span>
     </button>
+    <button class="more-menu-item" onclick="closeMoreMenu(); openAutoRankModal();">
+      <span class="mm-icon">🔄</span>
+      <span><span class="mm-label">Auto Rank Refresh</span><span class="mm-sub">Auto-check Google rankings every 7 days</span></span>
+    </button>
     <button class="more-menu-item" onclick="logoutAdmin();" style="border-top:1px solid var(--border); margin-top:6px; padding-top:14px;">
   <span class="mm-icon">🚪</span>
   <span><span class="mm-label">Logout</span><span class="mm-sub">Sign out of the admin panel</span></span>
 </button>
+  </div>
+</div>
+
+<div id="autoRankOverlay" class="workflow-overlay" style="display:none;" onclick="if(event.target===this) closeAutoRankModal()">
+  <div class="workflow-modal">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <div class="section-title" style="margin:0;">
+        Auto Rank Refresh — <span id="autoRankSiteLabel" style="color:var(--accent);"></span>
+      </div>
+      <button onclick="closeAutoRankModal()" style="background:transparent; border:none; padding:4px 10px; font-size:16px; color:var(--text); cursor:pointer;">✕</button>
+    </div>
+
+    <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">
+      When on, this site's tracked keywords are checked on Google (via Serper) every 7 days on their
+      own — the new ranking replaces the previous one automatically, same as clicking "Check Rankings
+      Now" yourself. Turn it off any time to go back to manual-only checks.
+    </p>
+
+    <label style="display:flex; align-items:center; gap:10px; font-size:13px; cursor:pointer; margin-bottom:10px;">
+      <input type="checkbox" id="autoRankToggle" onchange="toggleAutoRankRefresh()">
+      <span id="autoRankStatusLabel">Manual only</span>
+    </label>
+    <div id="autoRankNextRun" style="font-size:12px; color:var(--muted);"></div>
   </div>
 </div>
 
@@ -1727,6 +1754,50 @@ function renderSerperTable(rows) {
           </tr>`).join("")}
       </tbody>
     </table>`;
+}
+
+function openAutoRankModal() {
+  document.getElementById("autoRankSiteLabel").textContent = currentSite();
+  document.getElementById("autoRankOverlay").style.display = "flex";
+  loadAutoRankStatus();
+}
+
+function closeAutoRankModal() {
+  document.getElementById("autoRankOverlay").style.display = "none";
+}
+
+function renderAutoRankStatus(enabled, nextRunAt) {
+  document.getElementById("autoRankToggle").checked = enabled;
+  document.getElementById("autoRankStatusLabel").textContent = enabled ? "Automatic (every 7 days)" : "Manual only";
+  document.getElementById("autoRankNextRun").textContent =
+    enabled && nextRunAt ? `Next auto-refresh: ${new Date(nextRunAt).toLocaleString()}` : "";
+}
+
+async function loadAutoRankStatus() {
+  try {
+    const d = await fetchJSON(`${API}/api/serper/auto-refresh?site_url=${encodeURIComponent(currentSite())}`);
+    renderAutoRankStatus(d.enabled, d.next_run_at);
+  } catch (e) {
+    document.getElementById("autoRankStatusLabel").textContent = `Couldn't load status: ${e.message || "network error"}`;
+  }
+}
+
+async function toggleAutoRankRefresh() {
+  const enabled = document.getElementById("autoRankToggle").checked;
+  document.getElementById("autoRankStatusLabel").textContent = "Saving...";
+  try {
+    const res = await fetch(`${API}/api/serper/auto-refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site_url: currentSite(), enabled }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(parseApiError(body, res.statusText));
+    renderAutoRankStatus(body.enabled, body.next_run_at);
+  } catch (e) {
+    renderAutoRankStatus(!enabled, null);
+    alert(`Couldn't update auto rank refresh: ${e.message || "network error"}`);
+  }
 }
 
 let lastSerperRows = [];

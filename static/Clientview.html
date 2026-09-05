@@ -789,18 +789,30 @@ function timeAgo(isoString) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function renderSerperChange(r) {
+  if (r.change === null || r.change === undefined) return `<span style="color:var(--muted);">—</span>`;
+  if (r.change === 0) return `<span style="color:var(--muted);">No change</span>`;
+  // convention: negative change = position number went down = improved
+  const improved = r.change < 0;
+  const arrow = improved ? "▲" : "▼";
+  const color = improved ? "#2ecc71" : "#e5484d";
+  return `<span style="color:${color};">${arrow} ${Math.abs(r.change)}</span>`;
+}
+
 function renderSerperTable(rows) {
   if (!rows.length) return `<div class="loading">No keywords tracked yet</div>`;
   return `
     <table>
       <thead><tr>
-        <th>Keyword</th><th class="num">Position</th><th>Matched URL</th><th>Last Checked</th>
+        <th>Keyword</th><th class="num">Position</th><th class="num">Previous</th><th class="num">Change</th><th>Matched URL</th><th>Last Checked</th>
       </tr></thead>
       <tbody>
         ${rows.map(r => `
           <tr>
             <td title="${r.keyword}">${r.keyword}</td>
             <td class="num">${r.found === null ? "—" : (r.found ? r.position : "Not in top 100")}</td>
+            <td class="num" style="color:var(--muted);">${r.previous_position != null ? r.previous_position : "—"}</td>
+            <td class="num">${renderSerperChange(r)}</td>
             <td style="font-size:12px; color:var(--muted);" title="${r.url || ''}">${r.url ? r.url.slice(0, 40) : "—"}</td>
             <td style="font-size:12px; color:var(--muted);">${timeAgo(r.checked_at)}</td>
           </tr>`).join("")}

@@ -829,6 +829,28 @@ def api_serper_refresh(body: SerperRefreshBody, _admin: str = Depends(get_curren
     return {"site_url": body.site_url, "rows": rows}
 
 
+class SerperAutoRefreshBody(BaseModel):
+    site_url: str
+    enabled: bool
+
+
+@app.get("/api/serper/auto-refresh")
+def api_serper_auto_refresh_status(site_url: str, _admin: str = Depends(get_current_admin)):
+    return {"site_url": site_url, **email_scheduler.get_auto_rank_status(site_url)}
+
+
+@app.post("/api/serper/auto-refresh")
+def api_serper_auto_refresh_set(body: SerperAutoRefreshBody, _admin: str = Depends(get_current_admin)):
+    """Toggles automatic Serper rank refreshing for this site (3-dot menu ->
+    Auto Rank Refresh). When enabled, tracked keywords are re-checked every
+    7 days on their own — no need to click 'Check Rankings Now' manually."""
+    if body.enabled:
+        email_scheduler.enable_auto_rank_refresh(body.site_url)
+    else:
+        email_scheduler.disable_auto_rank_refresh(body.site_url)
+    return {"site_url": body.site_url, **email_scheduler.get_auto_rank_status(body.site_url)}
+
+
 # ---------------- GA4 endpoints ----------------
 
 @app.get("/api/ga4/summary")
