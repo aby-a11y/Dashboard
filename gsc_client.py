@@ -24,6 +24,7 @@ switches GA4 too.
 import os
 import json
 import datetime
+import hashlib
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -39,6 +40,43 @@ ACCOUNTS_FILE = "accounts.json"          # {account_id: {"label": "my@gmail.com"
 ACTIVE_ACCOUNT_FILE = "active_account.txt"  # just the active account_id, e.g. "my_gmail"
 
 _credentials_cache = {}  # {account_id: Credentials} — keeps every account's token warm in memory
+
+GSC_CACHE_FILE = "gsc_query_cache.json"
+GSC_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+
+
+def _gsc_cache_key(site_url, dimensions, start_date, end_date, row_limit, filters):
+    payload = json.dumps({
+        "site_url": site_url,
+        "dimensions": dimensions,
+        "start_date": start_date,
+        "end_date": end_date,
+        "row_limit": row_limit,
+        "filters": filters,
+    }, sort_keys=True)
+    return hashlib.md5(payload.encode()).hexdigest()
+
+
+def _load_gsc_cache():
+    if not os.path.exists(GSC_CACHE_FILE):
+        return {}
+    try:
+        with open(GSC_CACHE_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_gsc_cache(data):
+    with open(GSC_CACHE_FILE, "w") as f:
+        json.dump(data, f)
+
+
+def _prune_gsc_cache(cache, max_age_seconds=GSC_CACHE_TTL_SECONDS * 2):
+    """Drops entries older than 48h so the cache file doesn't grow forever
+    across hundreds of clients/keywords/date ranges."""
+    now = datetime.datetime.utcnow().timestamp()
+    return {k: v for k, v in cache.items() if now - v["cached_at"] < max_age_seconds}
 
 
 # ---------------- account registry ----------------
@@ -190,9 +228,23 @@ def default_date_range(days=28):
 
 def query_search_analytics(site_url, dimensions, start_date=None, end_date=None,
                             row_limit=100, filters=None):
-    """Generic search analytics query."""
+    """Generic search analytics query — results are cached to disk for
+    GSC_CACHE_TTL_SECONDS (24h) since GSC data itself only refreshes once
+    a day or two anyway. This is the single choke point every GSC-backed
+    endpoint (admin dashboard AND client portal) goes through, so caching
+    here caches everything downstream: summary, queries, pages, trend,
+    rank tracker, keyword history — all of it. Cuts real Search Console
+    API calls, server load, and GSC quota usage massively."""
     if not start_date or not end_date:
         start_date, end_date = default_date_range()
+
+    cache_key = _gsc_cache_key(site_url, dimensions, start_date, end_date, row_limit, filters)
+    cache = _load_gsc_cache()
+    entry = cache.get(cache_key)
+    now = datetime.datetime.utcnow().timestamp()
+
+    if entry and (now - entry["cached_at"] < GSC_CACHE_TTL_SECONDS):
+        return entry["rows"]
 
     body = {
         "startDate": start_date,
@@ -205,7 +257,13 @@ def query_search_analytics(site_url, dimensions, start_date=None, end_date=None,
 
     service = get_service()
     response = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
-    return response.get("rows", [])
+    rows = response.get("rows", [])
+
+    cache[cache_key] = {"cached_at": now, "rows": rows}
+    cache = _prune_gsc_cache(cache)
+    _save_gsc_cache(cache)
+
+    return rows
 
 
 def get_summary(site_url, start_date=None, end_date=None):
