@@ -214,9 +214,20 @@ def get_credentials():
 
 
 def list_sites():
+    cache_key = "list_sites::" + (get_active_account_id() or "")
+    cache = _load_gsc_cache()
+    entry = cache.get(cache_key)
+    now = datetime.datetime.utcnow().timestamp()
+    if entry and (now - entry["cached_at"] < GSC_CACHE_TTL_SECONDS):
+        return entry["rows"]
+
     service = get_service()
     result = service.sites().list().execute()
-    return [s["siteUrl"] for s in result.get("siteEntry", [])]
+    sites = [s["siteUrl"] for s in result.get("siteEntry", [])]
+
+    cache[cache_key] = {"cached_at": now, "rows": sites}
+    _save_gsc_cache(_prune_gsc_cache(cache))
+    return sites
 
 
 def default_date_range(days=28):
@@ -534,6 +545,13 @@ def get_rank_tracker_summary(site_url, keywords, start_date=None, end_date=None)
 
 
 def get_sitemaps(site_url):
+    cache_key = "sitemaps::" + site_url
+    cache = _load_gsc_cache()
+    entry = cache.get(cache_key)
+    now = datetime.datetime.utcnow().timestamp()
+    if entry and (now - entry["cached_at"] < GSC_CACHE_TTL_SECONDS):
+        return entry["rows"]
+
     service = get_service()
     result = service.sitemaps().list(siteUrl=site_url).execute()
     sitemaps = []
@@ -550,4 +568,7 @@ def get_sitemaps(site_url):
                 for c in s.get("contents", [])
             ],
         })
+
+    cache[cache_key] = {"cached_at": now, "rows": sitemaps}
+    _save_gsc_cache(_prune_gsc_cache(cache))
     return sitemaps
