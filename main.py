@@ -20,6 +20,7 @@ from google.api_core.exceptions import GoogleAPICallError
 
 import gsc_client
 import ga4_client
+import gmb_client
 import serper_client
 import client_auth
 import share_auth
@@ -1109,6 +1110,127 @@ def pdf_report(
             "Content-Disposition": "inline; filename=seo_report.pdf"
         }
     )
+
+@app.get("/api/site-gmb-map")
+def api_site_gmb_map():
+    import json
+    import os
+    path = "site_gmb_map.json"
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r") as f:
+        return json.load(f)
+ 
+ 
+# ---- 3) Admin: account/location discovery (only if mybusinessaccountmanagement is enabled) ----
+ 
+@app.get("/api/gmb/accounts")
+def api_gmb_accounts():
+    return {"accounts": _call(gmb_client.list_accounts)}
+ 
+@app.get("/api/gmb/accounts/{account_name:path}/locations")
+def api_gmb_locations_for_account(account_name: str):
+    return {"locations": _call(gmb_client.list_locations_for_account, f"accounts/{account_name}")}
+ 
+ 
+# ---- 4) Admin: single location profile + performance ----
+ 
+@app.get("/api/gmb/location")
+def api_gmb_location(location_id: str):
+    return _call(gmb_client.get_location_details, location_id)
+ 
+@app.get("/api/gmb/summary")
+def api_gmb_summary(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    s, e = _dates(start_date, end_date)
+    data = _call(gmb_client.get_summary, location_id, s, e)
+    return {"location_id": location_id, "start_date": s, "end_date": e, **data}
+ 
+@app.get("/api/gmb/trend")
+def api_gmb_trend(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gmb_client.get_trend, location_id, s, e)
+    return {"location_id": location_id, "start_date": s, "end_date": e, "rows": rows}
+ 
+@app.get("/api/gmb/comparison")
+def api_gmb_comparison(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    s, e = _dates(start_date, end_date)
+    return _call(gmb_client.get_comparison, location_id, s, e)
+ 
+@app.get("/api/gmb/keywords")
+def api_gmb_keywords(location_id: str, months_back: int = Query(1, ge=1, le=18)):
+    rows = _call(gmb_client.get_search_keywords, location_id, months_back)
+    return {"location_id": location_id, "rows": rows}
+ 
+ 
+# ---- 5) Admin: portfolio view — every client's GMB summary in one call ----
+#         (uses site_gmb_map.json so you don't need account-listing access at all)
+ 
+@app.get("/api/gmb/portfolio")
+def api_gmb_portfolio(start_date: Optional[str] = None, end_date: Optional[str] = None):
+    import json, os
+    s, e = _dates(start_date, end_date)
+    if not os.path.exists("site_gmb_map.json"):
+        return {"start_date": s, "end_date": e, "rows": [], "errors": []}
+    with open("site_gmb_map.json", "r") as f:
+        location_map = json.load(f)
+    return gmb_client.get_portfolio_summary(location_map, s, e)
+ 
+ 
+# ---- 6) Admin: write operations — edits the LIVE Google listing, use with care ----
+ 
+class GmbHoursBody(BaseModel):
+    location_id: str
+    hours_by_day: dict  # {"MONDAY": [{"open": "09:00", "close": "18:00"}], ...}
+ 
+@app.post("/api/gmb/hours")
+def api_gmb_update_hours(body: GmbHoursBody):
+    return _call(gmb_client.update_hours, body.location_id, body.hours_by_day)
+ 
+class GmbDescriptionBody(BaseModel):
+    location_id: str
+    description: str
+ 
+@app.post("/api/gmb/description")
+def api_gmb_update_description(body: GmbDescriptionBody):
+    return _call(gmb_client.update_description, body.location_id, body.description)
+ 
+@app.get("/api/gmb/categories/search")
+def api_gmb_search_categories(query: str, region_code: str = "IN"):
+    return {"categories": _call(gmb_client.search_categories, query, region_code)}
+ 
+ 
+# ---- 7) Client-scoped read-only endpoints (mirror /api/client/ga4/*) ----
+#         NOTE: like GA4's property_id, location_id here comes from the query
+#         param and is NOT locked to the client's JWT. If you want the same
+#         lockdown GSC's site_url gets, add a gmb_location_id field to each
+#         client record in client_auth.py (next to ga4_property_id) and pull
+#         it from the token instead of trusting the query param.
+ 
+@app.get("/api/client/gmb/summary")
+def api_client_gmb_summary(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                            site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    data = _call(gmb_client.get_summary, location_id, s, e)
+    return {"site_url": site_url, "location_id": location_id, "start_date": s, "end_date": e, **data}
+ 
+@app.get("/api/client/gmb/trend")
+def api_client_gmb_trend(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                          site_url: str = Depends(get_client_site)):
+    s, e = _dates(start_date, end_date)
+    rows = _call(gmb_client.get_trend, location_id, s, e)
+    return {"site_url": site_url, "location_id": location_id, "start_date": s, "end_date": e, "rows": rows}
+ 
+@app.get("/api/client/gmb/keywords")
+def api_client_gmb_keywords(location_id: str, months_back: int = Query(1, ge=1, le=18),
+                             site_url: str = Depends(get_client_site)):
+    rows = _call(gmb_client.get_search_keywords, location_id, months_back)
+    return {"site_url": site_url, "location_id": location_id, "rows": rows}
+ 
+@app.get("/api/client/gmb/location")
+def api_client_gmb_location(location_id: str, site_url: str = Depends(get_client_site)):
+    data = _call(gmb_client.get_location_details, location_id)
+    return {"site_url": site_url, **data}
+    
 @app.get("/api/ga4/list-properties")
 def api_ga4_list_properties(_admin: str = Depends(get_current_admin)):
     return {"properties": _call(ga4_client.list_all_properties)}
