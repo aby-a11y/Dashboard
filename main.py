@@ -1235,6 +1235,7 @@ def api_client_gmb_location(location_id: str, site_url: str = Depends(get_client
 def api_ga4_list_properties(_admin: str = Depends(get_current_admin)):
     return {"properties": _call(ga4_client.list_all_properties)}
 
+
 @app.get("/client-login")
 def client_login_page():
     return FileResponse("static/client-login.html")

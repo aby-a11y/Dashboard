@@ -33,6 +33,7 @@ from googleapiclient.discovery import build
 SCOPES = [
     "https://www.googleapis.com/auth/webmasters.readonly",
     "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/business.manage",
 ]
 
 ACCOUNTS_DIR = "accounts"

@@ -36,9 +36,8 @@ _DAILY_METRICS = [
 ]
 
 _LOCATION_READ_MASK = (
-    "name,title,storefrontAddress,phoneNumbers,websiteUri,regularHours,"
-    "specialHours,metadata,categories,labels,openInfo,profile,latlng,"
-    "serviceArea,moreHours"
+    "name,title,storefrontAddress,phoneNumbers,websiteUri,"
+    "regularHours,metadata,categories,openInfo,profile,latlng"
 )
 
 
@@ -195,12 +194,12 @@ def get_trend(location_id: str, start_date: str = None, end_date: str = None):
         location=f"locations/{location_id}",
         dailyMetrics=_DAILY_METRICS,
         **{
-            "dailyRange.start_date.year": s.year,
-            "dailyRange.start_date.month": s.month,
-            "dailyRange.start_date.day": s.day,
-            "dailyRange.end_date.year": e.year,
-            "dailyRange.end_date.month": e.month,
-            "dailyRange.end_date.day": e.day,
+            "dailyRange.startDate.year": s.year,
+            "dailyRange.startDate.month": s.month,
+            "dailyRange.startDate.day": s.day,
+            "dailyRange.endDate.year": e.year,
+            "dailyRange.endDate.month": e.month,
+            "dailyRange.endDate.day": e.day,
         },
     ).execute()
 
@@ -265,10 +264,10 @@ def get_search_keywords(location_id: str, months_back: int = 1):
     resp = service.locations().searchkeywords().impressions().monthly().list(
         parent=f"locations/{location_id}",
         **{
-            "monthlyRange.start_month.year": target.year,
-            "monthlyRange.start_month.month": target.month,
-            "monthlyRange.end_month.year": target.year,
-            "monthlyRange.end_month.month": target.month,
+               "monthlyRange.startMonth.year": target.year,
+               "monthlyRange.startMonth.month": target.month,
+               "monthlyRange.endMonth.year": target.year,
+               "monthlyRange.endMonth.month": target.month,
         },
     ).execute()
 
