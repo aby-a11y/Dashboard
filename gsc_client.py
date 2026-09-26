@@ -25,6 +25,9 @@ import os
 import json
 import datetime
 import hashlib
+import cache
+from db import get_session
+from models import GscTrackedKeyword, SiteAccountMap
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -47,8 +50,14 @@ ACTIVE_ACCOUNT_FILE = "active_account.txt"  # just the active account_id, e.g. "
 
 _credentials_cache = {}  # {account_id: Credentials} — keeps every account's token warm in memory
 
-GSC_CACHE_FILE = "gsc_query_cache.json"
 GSC_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+GSC_CACHE_KEY_PREFIX = "gsc_query_cache:"
+
+# Redis-backed now (see cache.py) instead of one shared gsc_query_cache.json
+# that every request had to fully read + rewrite. Each entry gets its own
+# key with a native TTL, so there's no full-file load/save and no manual
+# pruning step needed anymore — Redis expires stale entries on its own,
+# which matters once this is fielding queries for 200-300 clients at once.
 
 
 def _gsc_cache_key(site_url, dimensions, start_date, end_date, row_limit, filters):
@@ -60,29 +69,15 @@ def _gsc_cache_key(site_url, dimensions, start_date, end_date, row_limit, filter
         "row_limit": row_limit,
         "filters": filters,
     }, sort_keys=True)
-    return hashlib.md5(payload.encode()).hexdigest()
+    return GSC_CACHE_KEY_PREFIX + hashlib.md5(payload.encode()).hexdigest()
 
 
-def _load_gsc_cache():
-    if not os.path.exists(GSC_CACHE_FILE):
-        return {}
-    try:
-        with open(GSC_CACHE_FILE, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+def _gsc_cache_get(cache_key):
+    return cache.get_json(cache_key)
 
 
-def _save_gsc_cache(data):
-    with open(GSC_CACHE_FILE, "w") as f:
-        json.dump(data, f)
-
-
-def _prune_gsc_cache(cache, max_age_seconds=GSC_CACHE_TTL_SECONDS * 2):
-    """Drops entries older than 48h so the cache file doesn't grow forever
-    across hundreds of clients/keywords/date ranges."""
-    now = datetime.datetime.utcnow().timestamp()
-    return {k: v for k, v in cache.items() if now - v["cached_at"] < max_age_seconds}
+def _gsc_cache_set(cache_key, rows):
+    cache.set_json(cache_key, {"rows": rows}, ttl_seconds=GSC_CACHE_TTL_SECONDS)
 
 
 # ---------------- account registry ----------------
@@ -175,26 +170,21 @@ def set_active_account(account_id):
 
 # ---------------- credentials (per active account) ----------------
 
-def get_service():
-    """Build a fresh API client + HTTP connection for every call.
-    The underlying httplib2 connection is NOT safe to share across
-    concurrent requests, so we deliberately do not cache the service."""
-    creds = get_credentials()
-    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+class AccountNeedsLoginError(Exception):
+    """Raised by get_credentials_for(..., interactive=False) when an
+    account has no usable token yet. Used during multi-account scans so
+    one never-logged-in account doesn't pop open a browser window (or
+    worse, 5 of them at once) — the scan just skips it and reports it."""
+    def __init__(self, account_id):
+        self.account_id = account_id
+        super().__init__(f"Account '{account_id}' needs an interactive login "
+                          f"(switch to it once via the account switcher).")
 
 
-def _is_invalid_scope_error(ex):
-    return "invalid_scope" in str(ex).lower()
-
-
-def get_credentials():
-    account_id = get_active_account_id()
-    if not account_id:
-        raise RuntimeError(
-            "No Google account configured yet — add one via POST /api/admin/accounts "
-            "(see accounts/ folder layout in gsc_client.py)."
-        )
-
+def get_credentials_for(account_id, interactive=False):
+    """Like get_credentials() but for an explicit account_id — not
+    necessarily the active one. interactive=False (used by bulk scans)
+    raises AccountNeedsLoginError instead of launching a browser."""
     creds = _credentials_cache.get(account_id)
     if creds and creds.valid:
         return creds
@@ -211,14 +201,9 @@ def get_credentials():
             except Exception as ex:
                 if not _is_invalid_scope_error(ex):
                     raise
-                # This account's Google Cloud project doesn't have the GMB
-                # scope approved/registered yet. Fall back to the base
-                # scopes so GSC, GA4 and ranking keep working for this
-                # account — GMB simply stays unavailable here until that
-                # project's own GBP API access is approved.
                 creds = Credentials.from_authorized_user_file(paths["token"], BASE_SCOPES)
                 creds.refresh(Request())
-        else:
+        elif interactive:
             if not os.path.exists(paths["client_secret"]):
                 raise RuntimeError(
                     f"Missing {paths['client_secret']} — put that account's OAuth "
@@ -232,6 +217,8 @@ def get_credentials():
                     raise
                 flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], BASE_SCOPES)
                 creds = flow.run_local_server(port=0, prompt="select_account")
+        else:
+            raise AccountNeedsLoginError(account_id)
 
         with open(paths["token"], "w") as f:
             f.write(creds.to_json())
@@ -240,21 +227,114 @@ def get_credentials():
     return creds
 
 
+def resolve_account_for_site(site_url):
+    """Which registered account actually has this site — from the
+    auto-discovered site_account_map (see list_all_sites_across_accounts()).
+    Falls back to the currently active account if this site hasn't been
+    discovered yet, so nothing breaks for a brand-new/unmapped site —
+    just re-run auto-discovery, or switch accounts manually this once."""
+    with get_session() as session:
+        row = session.get(SiteAccountMap, site_url)
+        if row:
+            return row.gsc_account_id
+    return get_active_account_id()
+
+
+def get_service(site_url=None):
+    """Build a fresh API client + HTTP connection for every call.
+    The underlying httplib2 connection is NOT safe to share across
+    concurrent requests, so we deliberately do not cache the service.
+    Pass site_url so this automatically uses whichever of your registered
+    accounts actually has that site (see resolve_account_for_site) instead
+    of always using whatever account happens to be "active"."""
+    creds = get_credentials(site_url)
+    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+
+
+def _is_invalid_scope_error(ex):
+    return "invalid_scope" in str(ex).lower()
+
+
+def get_credentials(site_url=None):
+    account_id = resolve_account_for_site(site_url) if site_url else get_active_account_id()
+    if not account_id:
+        raise RuntimeError(
+            "No Google account configured yet — add one via POST /api/admin/accounts "
+            "(see accounts/ folder layout in gsc_client.py)."
+        )
+    return get_credentials_for(account_id, interactive=True)
+
+
 def list_sites():
-    cache_key = "list_sites::" + (get_active_account_id() or "")
-    cache = _load_gsc_cache()
-    entry = cache.get(cache_key)
-    now = datetime.datetime.utcnow().timestamp()
-    if entry and (now - entry["cached_at"] < GSC_CACHE_TTL_SECONDS):
+    cache_key = GSC_CACHE_KEY_PREFIX + "list_sites::" + (get_active_account_id() or "")
+    entry = _gsc_cache_get(cache_key)
+    if entry:
         return entry["rows"]
 
     service = get_service()
     result = service.sites().list().execute()
     sites = [s["siteUrl"] for s in result.get("siteEntry", [])]
 
-    cache[cache_key] = {"cached_at": now, "rows": sites}
-    _save_gsc_cache(_prune_gsc_cache(cache))
+    _gsc_cache_set(cache_key, sites)
     return sites
+
+
+def list_sites_for(account_id):
+    """Same as list_sites() but for an explicit account, not necessarily
+    the active one — used by the multi-account scan below so it never
+    needs to flip active_account.txt just to look."""
+    cache_key = GSC_CACHE_KEY_PREFIX + "list_sites::" + account_id
+    entry = _gsc_cache_get(cache_key)
+    if entry:
+        return entry["rows"]
+
+    creds = get_credentials_for(account_id, interactive=False)
+    service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+    result = service.sites().list().execute()
+    sites = [s["siteUrl"] for s in result.get("siteEntry", [])]
+
+    _gsc_cache_set(cache_key, sites)
+    return sites
+
+
+def list_all_sites_across_accounts():
+    """Scans every registered account (all 5 Gmail logins, say) for the
+    sites it has Search Console access to, and auto-fills site_account_map
+    with which account owns each one. This is what makes a newly-granted
+    client access show up in the dashboard on its own — no manual account
+    switch, no manual DB edit. An account with no valid token yet (never
+    logged into once) is skipped, not blocked on — it's reported back so
+    you know to log into it once via the account switcher.
+
+    Returns {"sites": [site_url, ...], "accounts_needing_login": [account_id, ...]}."""
+    all_sites = []
+    needs_login = []
+    with get_session() as session:
+        for account in list_accounts():
+            account_id = account["account_id"]
+            try:
+                sites = list_sites_for(account_id)
+            except AccountNeedsLoginError:
+                needs_login.append(account_id)
+                continue
+            except Exception:
+                # Token exists but refresh failed (expired/revoked), that
+                # account's GCP project doesn't have the Search Console API
+                # enabled, etc. Skip just this one account instead of
+                # failing site-loading for every client — same treatment
+                # as "needs login", since re-switching to it (which
+                # re-triggers the OAuth flow) fixes both cases.
+                needs_login.append(account_id)
+                continue
+            for site_url in sites:
+                row = session.get(SiteAccountMap, site_url)
+                if row is None:
+                    row = SiteAccountMap(site_url=site_url, gsc_account_id=account_id)
+                else:
+                    row.gsc_account_id = account_id
+                session.add(row)
+                all_sites.append(site_url)
+    return {"sites": sorted(set(all_sites)), "accounts_needing_login": needs_login}
 
 
 def default_date_range(days=28):
@@ -277,11 +357,8 @@ def query_search_analytics(site_url, dimensions, start_date=None, end_date=None,
         start_date, end_date = default_date_range()
 
     cache_key = _gsc_cache_key(site_url, dimensions, start_date, end_date, row_limit, filters)
-    cache = _load_gsc_cache()
-    entry = cache.get(cache_key)
-    now = datetime.datetime.utcnow().timestamp()
-
-    if entry and (now - entry["cached_at"] < GSC_CACHE_TTL_SECONDS):
+    entry = _gsc_cache_get(cache_key)
+    if entry:
         return entry["rows"]
 
     body = {
@@ -293,14 +370,11 @@ def query_search_analytics(site_url, dimensions, start_date=None, end_date=None,
     if filters:
         body["dimensionFilterGroups"] = [{"filters": filters}]
 
-    service = get_service()
+    service = get_service(site_url)
     response = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
     rows = response.get("rows", [])
 
-    cache[cache_key] = {"cached_at": now, "rows": rows}
-    cache = _prune_gsc_cache(cache)
-    _save_gsc_cache(cache)
-
+    _gsc_cache_set(cache_key, rows)
     return rows
 
 
@@ -476,39 +550,28 @@ def get_movers(site_url, start_date=None, end_date=None, limit=10, min_impressio
     return {"gainers": gainers, "losers": losers}
 
 
-TRACKED_KEYWORDS_FILE = "tracked_keywords.json"
-
-
-def _load_tracked_keywords():
-    import json
-    if not os.path.exists(TRACKED_KEYWORDS_FILE):
-        return {}
-    with open(TRACKED_KEYWORDS_FILE, "r") as f:
-        return json.load(f)
-
-
-def _save_tracked_keywords(data):
-    import json
-    with open(TRACKED_KEYWORDS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
 def get_tracked_keywords(site_url):
-    return _load_tracked_keywords().get(site_url, [])
+    with get_session() as session:
+        record = session.get(GscTrackedKeyword, site_url)
+        return list(record.keywords) if record else []
 
 
 def set_tracked_keywords(site_url, keywords):
     """Overwrite the tracked-keyword list for a site. Dedupes (case-insensitive),
     strips whitespace, drops empties, preserves the order given."""
-    data = _load_tracked_keywords()
     cleaned, seen = [], set()
     for kw in keywords:
         kw = (kw or "").strip()
         if kw and kw.lower() not in seen:
             cleaned.append(kw)
             seen.add(kw.lower())
-    data[site_url] = cleaned
-    _save_tracked_keywords(data)
+    with get_session() as session:
+        record = session.get(GscTrackedKeyword, site_url)
+        if record is None:
+            record = GscTrackedKeyword(site_url=site_url, keywords=cleaned)
+        else:
+            record.keywords = cleaned
+        session.add(record)
     return cleaned
 
 
@@ -572,14 +635,12 @@ def get_rank_tracker_summary(site_url, keywords, start_date=None, end_date=None)
 
 
 def get_sitemaps(site_url):
-    cache_key = "sitemaps::" + site_url
-    cache = _load_gsc_cache()
-    entry = cache.get(cache_key)
-    now = datetime.datetime.utcnow().timestamp()
-    if entry and (now - entry["cached_at"] < GSC_CACHE_TTL_SECONDS):
+    cache_key = GSC_CACHE_KEY_PREFIX + "sitemaps::" + site_url
+    entry = _gsc_cache_get(cache_key)
+    if entry:
         return entry["rows"]
 
-    service = get_service()
+    service = get_service(site_url)
     result = service.sitemaps().list(siteUrl=site_url).execute()
     sitemaps = []
     for s in result.get("sitemap", []):
@@ -596,6 +657,5 @@ def get_sitemaps(site_url):
             ],
         })
 
-    cache[cache_key] = {"cached_at": now, "rows": sitemaps}
-    _save_gsc_cache(_prune_gsc_cache(cache))
+    _gsc_cache_set(cache_key, sitemaps)
     return sitemaps

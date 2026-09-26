@@ -17,7 +17,11 @@ Optional (only needed for list_accounts / list_locations_for_account):
 from datetime import date, timedelta
 from googleapiclient.discovery import build
 
+import gsc_client
 from gsc_client import get_credentials, default_date_range  # reuse shared auth + date helper
+from domain_utils import extract_domain
+from db import get_session
+from models import SiteGMBMap
 
 # Full metric set — Business Profile Performance API DailyMetric enum.
 # https://developers.google.com/my-business/reference/performance/rest/v1/DailyMetric
@@ -43,14 +47,44 @@ _LOCATION_READ_MASK = (
 
 # ---------------- service builders ----------------
 
+def _resolve_account_for_location(location_id):
+    """Reverse lookup: which site is this GMB location mapped to
+    (site_gmb_map), then which registered account owns that site
+    (site_account_map) — same auto-routing as GA4, so a GMB call
+    automatically uses the right one of your 5 Gmail accounts."""
+    if not location_id:
+        return None
+    with get_session() as session:
+        from models import SiteAccountMap
+        gmb_row = session.query(SiteGMBMap).filter(
+            SiteGMBMap.gmb_location_id == location_id
+        ).first()
+        if not gmb_row:
+            return None
+        acct_row = session.get(SiteAccountMap, gmb_row.site_url)
+        return acct_row.gsc_account_id if acct_row else None
+
+
+def _creds_for_location(location_id=None):
+    account_id = _resolve_account_for_location(location_id)
+    if account_id:
+        return gsc_client.get_credentials_for(account_id, interactive=True)
+    return get_credentials()  # falls back to the active account (old behaviour)
+
+
 def get_account_service():
     return build("mybusinessaccountmanagement", "v1", credentials=get_credentials())
 
-def get_info_service():
-    return build("mybusinessbusinessinformation", "v1", credentials=get_credentials())
+def get_account_service_for(account_id):
+    """Explicit-account version, for the multi-account discovery scan."""
+    creds = gsc_client.get_credentials_for(account_id, interactive=False)
+    return build("mybusinessaccountmanagement", "v1", credentials=creds)
 
-def get_performance_service():
-    return build("businessprofileperformance", "v1", credentials=get_credentials())
+def get_info_service(location_id=None):
+    return build("mybusinessbusinessinformation", "v1", credentials=_creds_for_location(location_id))
+
+def get_performance_service(location_id=None):
+    return build("businessprofileperformance", "v1", credentials=_creds_for_location(location_id))
 
 
 # ---------------- accounts / locations discovery (optional API) ----------------
@@ -71,6 +105,61 @@ def list_locations_for_account(account_name: str):
         parent=account_name, readMask=_LOCATION_READ_MASK,
     ).execute()
     return [_shape_location(loc) for loc in resp.get("locations", [])]
+
+
+# ---------------- multi-account auto-discovery ----------------
+
+def discover_location_map(known_site_urls):
+    """Scans every registered account for GMB locations, matches each
+    location's website URL (by domain) against known_site_urls (the sites
+    gsc_client.list_all_sites_across_accounts() just found), and auto-fills
+    site_gmb_map for every match. Requires the mybusinessaccountmanagement
+    API enabled for that account's Cloud project (same requirement as
+    list_accounts() above) — an account without it is just skipped, not
+    treated as an error, since not every one of your 5 accounts necessarily
+    has GMB API access approved yet.
+
+    Returns {"matched": [{"site_url", "location_id"}], "unmatched_locations":
+    [{"title", "location_id"}], "accounts_needing_login": [...]}."""
+    domain_to_site = {extract_domain(u): u for u in known_site_urls}
+    matched, unmatched, needs_login = [], [], []
+
+    with get_session() as session:
+        for account in gsc_client.list_accounts():
+            account_id = account["account_id"]
+            try:
+                acct_service = get_account_service_for(account_id)
+                accounts_resp = acct_service.accounts().list().execute()
+            except gsc_client.AccountNeedsLoginError:
+                needs_login.append(account_id)
+                continue
+            except Exception:
+                continue  # mybusinessaccountmanagement not enabled for this account yet
+
+            info_service = build("mybusinessbusinessinformation", "v1",
+                                  credentials=gsc_client.get_credentials_for(account_id, interactive=False))
+            for gmb_account in accounts_resp.get("accounts", []):
+                try:
+                    resp = info_service.accounts().locations().list(
+                        parent=gmb_account["name"], readMask=_LOCATION_READ_MASK,
+                    ).execute()
+                except Exception:
+                    continue
+                for loc in resp.get("locations", []):
+                    location = _shape_location(loc)
+                    site_url = domain_to_site.get(extract_domain(location["website"] or ""))
+                    if not site_url:
+                        unmatched.append({"title": location["title"], "location_id": location["location_id"]})
+                        continue
+                    row = session.get(SiteGMBMap, site_url)
+                    if row is None:
+                        row = SiteGMBMap(site_url=site_url, gmb_location_id=location["location_id"])
+                    else:
+                        row.gmb_location_id = location["location_id"]
+                    session.add(row)
+                    matched.append({"site_url": site_url, "location_id": location["location_id"]})
+
+    return {"matched": matched, "unmatched_locations": unmatched, "accounts_needing_login": needs_login}
 
 
 # ---------------- location profile (no account API needed if you already have location_id) ----------------
@@ -123,7 +212,7 @@ def _shape_location(loc):
 def get_location_details(location_id: str):
     """Full profile for one location. Only needs Business Information API —
     no account listing required if you already have the location_id."""
-    service = get_info_service()
+    service = get_info_service(location_id)
     loc = service.locations().get(
         name=f"locations/{location_id}", readMask=_LOCATION_READ_MASK,
     ).execute()
@@ -153,7 +242,7 @@ def update_hours(location_id: str, hours_by_day: dict):
                 "closeDay": day,
                 "closeTime": {"hours": int(ch), "minutes": int(cm)},
             })
-    service = get_info_service()
+    service = get_info_service(location_id)
     return service.locations().patch(
         name=f"locations/{location_id}",
         updateMask="regularHours",
@@ -161,7 +250,7 @@ def update_hours(location_id: str, hours_by_day: dict):
     ).execute()
 
 def update_description(location_id: str, description: str):
-    service = get_info_service()
+    service = get_info_service(location_id)
     return service.locations().patch(
         name=f"locations/{location_id}",
         updateMask="profile.description",
@@ -189,7 +278,7 @@ def get_trend(location_id: str, start_date: str = None, end_date: str = None):
     s = date.fromisoformat(start_date)
     e = date.fromisoformat(end_date)
 
-    service = get_performance_service()
+    service = get_performance_service(location_id)
     resp = service.locations().fetchMultiDailyMetricsTimeSeries(
         location=f"locations/{location_id}",
         dailyMetrics=_DAILY_METRICS,
@@ -260,7 +349,7 @@ def get_search_keywords(location_id: str, months_back: int = 1):
     for _ in range(months_back - 1):
         target = (target - timedelta(days=1)).replace(day=1)
 
-    service = get_performance_service()
+    service = get_performance_service(location_id)
     resp = service.locations().searchkeywords().impressions().monthly().list(
         parent=f"locations/{location_id}",
         **{

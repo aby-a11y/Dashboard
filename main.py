@@ -29,6 +29,8 @@ import scheduler as email_scheduler
 from pdf_report import generate_pdf
 from fastapi.responses import StreamingResponse
 import admin_auth
+from db import get_session, init_db
+from models import SiteGA4Map, SiteGMBMap
 
 app = FastAPI(
     title="SEO Client Dashboard API",
@@ -43,6 +45,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _init_database():
+    """Creates DB tables on first run — no-op once they already exist.
+    Runs before the scheduler so workflow_store (Postgres-backed) is
+    ready when scheduler.py starts pulling pending workflows."""
+    init_db()
 
 
 @app.on_event("startup")
@@ -640,20 +650,46 @@ def api_active_account(_admin: str = Depends(get_current_admin)):
 
 @app.get("/api/sites")
 def api_sites(_admin: str = Depends(get_current_admin)):
-    return {"sites": _call(gsc_client.list_sites)}
+    """Sites across EVERY registered Google account, not just the active
+    one — so a newly client-granted site shows up here on its own, without
+    manually switching accounts first. Also silently keeps site_account_map
+    in sync (see gsc_client.list_all_sites_across_accounts)."""
+    result = _call(gsc_client.list_all_sites_across_accounts)
+    return {"sites": result["sites"], "accounts_needing_login": result["accounts_needing_login"]}
+
+
+@app.post("/api/admin/auto-discover")
+def api_auto_discover(_admin: str = Depends(get_current_admin)):
+    """One button: scans every registered Google account (all 5 Gmail
+    logins) for GSC sites, GA4 properties and GMB locations, matches them
+    by domain, and auto-fills site_account_map / site_ga4_map /
+    site_gmb_map — replaces manually running an endpoint and hand-editing
+    a JSON file per site. Run again any time a client grants new access."""
+    gsc_result = _call(gsc_client.list_all_sites_across_accounts)
+    ga4_result = _call(ga4_client.discover_property_map, gsc_result["sites"])
+    gmb_result = _call(gmb_client.discover_location_map, gsc_result["sites"])
+    return {
+        "sites_found": len(gsc_result["sites"]),
+        "sites": gsc_result["sites"],
+        "ga4_matched": len(ga4_result["matched"]),
+        "ga4_unmatched_properties": ga4_result["unmatched_properties"],
+        "gmb_matched": len(gmb_result["matched"]),
+        "gmb_unmatched_locations": gmb_result["unmatched_locations"],
+        "accounts_needing_login": sorted(set(
+            gsc_result["accounts_needing_login"]
+            + ga4_result["accounts_needing_login"]
+            + gmb_result["accounts_needing_login"]
+        )),
+    }
 
 
 @app.get("/api/site-ga4-map")
 def api_site_ga4_map(_admin: str = Depends(get_current_admin)):
     """Returns the {site_url: ga4_property_id} mapping so the frontend
     can auto-fill the GA4 Property ID when a site is selected."""
-    import json
-    import os
-    path = "site_ga4_map.json"
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r") as f:
-        return json.load(f)
+    with get_session() as session:
+        rows = session.query(SiteGA4Map).all()
+        return {r.site_url: r.ga4_property_id for r in rows}
 
 
 @app.get("/api/summary")
@@ -1139,13 +1175,9 @@ def pdf_report(
 
 @app.get("/api/site-gmb-map")
 def api_site_gmb_map(_admin: str = Depends(get_current_admin)):
-    import json
-    import os
-    path = "site_gmb_map.json"
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r") as f:
-        return json.load(f)
+    with get_session() as session:
+        rows = session.query(SiteGMBMap).all()
+        return {r.site_url: r.gmb_location_id for r in rows}
  
  
 # ---- 3) Admin: account/location discovery (only if mybusinessaccountmanagement is enabled) ----
@@ -1198,12 +1230,12 @@ def api_gmb_keywords(location_id: str, months_back: int = Query(1, ge=1, le=18),
 @app.get("/api/gmb/portfolio")
 def api_gmb_portfolio(start_date: Optional[str] = None, end_date: Optional[str] = None,
                        _admin: str = Depends(get_current_admin)):
-    import json, os
     s, e = _dates(start_date, end_date)
-    if not os.path.exists("site_gmb_map.json"):
+    with get_session() as session:
+        rows = session.query(SiteGMBMap).all()
+        location_map = {r.site_url: r.gmb_location_id for r in rows}
+    if not location_map:
         return {"start_date": s, "end_date": e, "rows": [], "errors": []}
-    with open("site_gmb_map.json", "r") as f:
-        location_map = json.load(f)
     return gmb_client.get_portfolio_summary(location_map, s, e)
 
 

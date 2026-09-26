@@ -1,0 +1,33 @@
+version: "3.8"
+
+# Brings up Postgres + Redis next to the app on the EC2 box. The app
+# itself (main.py via uvicorn) keeps running as the existing systemd
+# service — set DATABASE_URL / REDIS_URL in its .env to point at these
+# two containers (localhost:5432 / localhost:6379), or add an `app`
+# service here later if you want the whole stack containerized.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: seo_user
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: seo_dashboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+volumes:
+  pgdata:
+  redisdata:

@@ -10,5 +10,7 @@ python-dotenv
 pyjwt
 apscheduler
 sqlalchemy
+psycopg2-binary
+redis
 python-multipart
 google.analytics-admin

@@ -6,55 +6,62 @@ can be a misleading blended number), this hits live Google search results
 through Serper (https://serper.dev) and returns the *actual* rank — 1st,
 2nd, "not found in top N", etc.
 
-Because every check costs an API credit, results are cached to disk
-(serper_rank_cache.json) and only refreshed when explicitly requested —
-see refresh_rankings(). Nothing here calls Serper on a normal page load.
+Because every check costs an API credit, results are cached in Redis
+(see cache.py) and only refreshed when explicitly requested — see
+refresh_rankings(). Nothing here calls Serper on a normal page load.
 """
 
 import os
-import json
 import datetime
 import requests
 from dotenv import load_dotenv
+
+import cache as redis_cache
+from db import get_session
+from models import SerperTrackedKeyword
 
 load_dotenv()  # reads SERPER_API_KEY from a local .env file
 
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 SERPER_URL = "https://google.serper.dev/search"
 
-KEYWORDS_FILE = "serper_keywords.json"   # {site_url: ["keyword", ...]}  — you decide these manually
-CACHE_FILE = "serper_rank_cache.json"    # {site_url: {keyword: {position, url, found, checked_at}}}
+# Rank checks cost paid API credits, so this cache is never left to expire
+# on its own (no TTL) — it's only ever overwritten by an explicit refresh.
+CACHE_KEY_PREFIX = "serper_rank_cache:"  # + site_url
 
 
-# ---------------- keyword list (per-site, manually curated) ----------------
-
-def _load_json(path):
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r") as f:
-        return json.load(f)
+def _cache_key(site_url):
+    return CACHE_KEY_PREFIX + site_url
 
 
-def _save_json(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
+# ---------------- keyword list (per-site, manually curated; Postgres-backed) ----------------
 
 def get_tracked_keywords(site_url):
-    return _load_json(KEYWORDS_FILE).get(site_url, [])
+    with get_session() as session:
+        record = session.get(SerperTrackedKeyword, site_url)
+        return list(record.keywords) if record else []
 
 
-def set_tracked_keywords(site_url, keywords):
-    """Overwrites the whole list for a site (used by the single add/remove chip UI)."""
-    data = _load_json(KEYWORDS_FILE)
+def _dedupe(existing, new):
     cleaned, seen = [], set()
-    for kw in keywords:
+    for kw in list(existing) + list(new):
         kw = (kw or "").strip()
         if kw and kw.lower() not in seen:
             cleaned.append(kw)
             seen.add(kw.lower())
-    data[site_url] = cleaned
-    _save_json(KEYWORDS_FILE, data)
+    return cleaned
+
+
+def set_tracked_keywords(site_url, keywords):
+    """Overwrites the whole list for a site (used by the single add/remove chip UI)."""
+    cleaned = _dedupe([], keywords)
+    with get_session() as session:
+        record = session.get(SerperTrackedKeyword, site_url)
+        if record is None:
+            record = SerperTrackedKeyword(site_url=site_url, keywords=cleaned)
+        else:
+            record.keywords = cleaned
+        session.add(record)
     return cleaned
 
 
@@ -62,16 +69,15 @@ def add_tracked_keywords_bulk(site_url, keywords):
     """Merges a batch of keywords into the existing tracked list for a site
     instead of overwriting it — used by the admin 'bulk upload' box so pasting
     50 keywords doesn't wipe out ones already being tracked."""
-    data = _load_json(KEYWORDS_FILE)
-    existing = data.get(site_url, [])
-    cleaned, seen = [], set()
-    for kw in existing + list(keywords):
-        kw = (kw or "").strip()
-        if kw and kw.lower() not in seen:
-            cleaned.append(kw)
-            seen.add(kw.lower())
-    data[site_url] = cleaned
-    _save_json(KEYWORDS_FILE, data)
+    with get_session() as session:
+        record = session.get(SerperTrackedKeyword, site_url)
+        existing = record.keywords if record else []
+        cleaned = _dedupe(existing, keywords)
+        if record is None:
+            record = SerperTrackedKeyword(site_url=site_url, keywords=cleaned)
+        else:
+            record.keywords = cleaned
+        session.add(record)
     return cleaned
 
 
@@ -151,8 +157,7 @@ def refresh_rankings(site_url, keywords, location=None, gl="us"):
     forward as previous_position/previous_checked_at, so the very next
     refresh (e.g. next week) can show a current-vs-previous comparison.
     """
-    cache = _load_json(CACHE_FILE)
-    site_cache = cache.get(site_url, {})
+    site_cache = redis_cache.get_json(_cache_key(site_url)) or {}
     now = datetime.datetime.utcnow().isoformat() + "Z"
 
     for kw in keywords:
@@ -167,8 +172,7 @@ def refresh_rankings(site_url, keywords, location=None, gl="us"):
             "previous_checked_at": prior.get("checked_at") if prior else None,
         }
 
-    cache[site_url] = site_cache
-    _save_json(CACHE_FILE, cache)
+    redis_cache.set_json(_cache_key(site_url), site_cache)
     return get_cached_rankings(site_url)
 
 
@@ -182,7 +186,7 @@ def get_cached_rankings(site_url):
     as the GSC rank tracker, so the UI can render a current-vs-previous
     comparison without extra calls.
     """
-    cache = _load_json(CACHE_FILE).get(site_url, {})
+    cache = redis_cache.get_json(_cache_key(site_url)) or {}
     keywords = get_tracked_keywords(site_url)
 
     rows = []
