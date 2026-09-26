@@ -81,10 +81,11 @@ def _verify_password(password, salt_hex, expected_digest):
 
 # ---------------- admin: manage client logins ----------------
 
-def create_or_update_client(client_id, site_url, password=None, name=None, ga4_property_id=None):
+def create_or_update_client(client_id, site_url, password=None, name=None, ga4_property_id=None,
+                             gmb_location_id=None):
     """Admin call. Creates a new client login, or updates an existing one.
     Password is only changed if a new one is provided — lets the admin
-    update the site/name/ga4 id without resetting the password."""
+    update the site/name/ga4 id/gmb location without resetting the password."""
     clients = _load_json(CLIENTS_FILE)
     client_id = client_id.strip()
     record = clients.get(client_id, {})
@@ -99,6 +100,8 @@ def create_or_update_client(client_id, site_url, password=None, name=None, ga4_p
         record["name"] = name
     if ga4_property_id is not None:
         record["ga4_property_id"] = ga4_property_id
+    if gmb_location_id is not None:
+        record["gmb_location_id"] = gmb_location_id
 
     if "password_hash" not in record:
         raise ValueError("A password is required when creating a new client login")
@@ -126,6 +129,7 @@ def list_clients():
             "site_url": rec.get("site_url"),
             "name": rec.get("name"),
             "ga4_property_id": rec.get("ga4_property_id"),
+            "gmb_location_id": rec.get("gmb_location_id"),
         }
         for cid, rec in clients.items()
     ]
@@ -157,6 +161,13 @@ def issue_token(client_id, site_url):
 def decode_token(token):
     """Raises jwt.PyJWTError (expired / invalid signature / malformed) on failure."""
     return jwt.decode(token, _JWT_SECRET, algorithms=[JWT_ALGO])
+
+
+def get_client_record(client_id):
+    """Looks up one client's stored record by client_id (e.g. to resolve
+    gmb_location_id server-side from the JWT instead of trusting a query
+    param — see get_client_gmb_location in main.py)."""
+    return _load_json(CLIENTS_FILE).get(client_id)
 
 
 # ---------------- admin: per-site Google Drive report link ----------------

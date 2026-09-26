@@ -101,6 +101,29 @@ def get_client_site(authorization: Optional[str] = Header(None)) -> str:
         raise HTTPException(status_code=401, detail="Invalid session token")
     return payload["site_url"]
 
+
+def get_client_gmb_location(authorization: Optional[str] = Header(None)) -> str:
+    """Auth dependency for every /api/client/gmb/* endpoint. Resolves the
+    caller's gmb_location_id strictly from their stored client record (via
+    client_id in the JWT) — same lockdown pattern as get_client_site, so a
+    client can't pass a different client's location_id via the query
+    string. Raises 404 if the admin hasn't linked a GMB location for this
+    client yet, rather than silently returning nothing."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = client_auth.decode_token(token)
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired, please log in again")
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+    record = client_auth.get_client_record(payload["client_id"])
+    location_id = record.get("gmb_location_id") if record else None
+    if not location_id:
+        raise HTTPException(status_code=404, detail="No Google Business Profile linked for this client yet")
+    return location_id
+
 def get_current_admin(authorization: Optional[str] = Header(None)) -> str:
     """Auth dependency for every /api/admin/* endpoint."""
     if not authorization or not authorization.lower().startswith("bearer "):
@@ -133,6 +156,7 @@ def api_client_login(body: ClientLoginBody):
         "site_url": record["site_url"],
         "name": record.get("name"),
         "ga4_property_id": record.get("ga4_property_id"),
+        "gmb_location_id": record.get("gmb_location_id"),
     }
     
 class AdminLoginBody(BaseModel):
@@ -324,13 +348,15 @@ class AdminClientBody(BaseModel):
     password: Optional[str] = None  # omit when just updating name/site/ga4 id
     name: Optional[str] = None
     ga4_property_id: Optional[str] = None
+    gmb_location_id: Optional[str] = None
 
 
 @app.post("/api/admin/clients")
 def api_admin_create_client(body: AdminClientBody, _admin: str = Depends(get_current_admin)):
     try:
         return client_auth.create_or_update_client(
-            body.client_id, body.site_url, body.password, body.name, body.ga4_property_id
+            body.client_id, body.site_url, body.password, body.name, body.ga4_property_id,
+            body.gmb_location_id
         )
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex))
@@ -1112,7 +1138,7 @@ def pdf_report(
     )
 
 @app.get("/api/site-gmb-map")
-def api_site_gmb_map():
+def api_site_gmb_map(_admin: str = Depends(get_current_admin)):
     import json
     import os
     path = "site_gmb_map.json"
@@ -1123,50 +1149,55 @@ def api_site_gmb_map():
  
  
 # ---- 3) Admin: account/location discovery (only if mybusinessaccountmanagement is enabled) ----
- 
+
 @app.get("/api/gmb/accounts")
-def api_gmb_accounts():
+def api_gmb_accounts(_admin: str = Depends(get_current_admin)):
     return {"accounts": _call(gmb_client.list_accounts)}
- 
+
 @app.get("/api/gmb/accounts/{account_name:path}/locations")
-def api_gmb_locations_for_account(account_name: str):
+def api_gmb_locations_for_account(account_name: str, _admin: str = Depends(get_current_admin)):
     return {"locations": _call(gmb_client.list_locations_for_account, f"accounts/{account_name}")}
- 
- 
+
+
 # ---- 4) Admin: single location profile + performance ----
- 
+
 @app.get("/api/gmb/location")
-def api_gmb_location(location_id: str):
+def api_gmb_location(location_id: str, _admin: str = Depends(get_current_admin)):
     return _call(gmb_client.get_location_details, location_id)
- 
+
 @app.get("/api/gmb/summary")
-def api_gmb_summary(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_gmb_summary(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                     _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     data = _call(gmb_client.get_summary, location_id, s, e)
     return {"location_id": location_id, "start_date": s, "end_date": e, **data}
- 
+
 @app.get("/api/gmb/trend")
-def api_gmb_trend(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_gmb_trend(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                   _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     rows = _call(gmb_client.get_trend, location_id, s, e)
     return {"location_id": location_id, "start_date": s, "end_date": e, "rows": rows}
- 
+
 @app.get("/api/gmb/comparison")
-def api_gmb_comparison(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_gmb_comparison(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                        _admin: str = Depends(get_current_admin)):
     s, e = _dates(start_date, end_date)
     return _call(gmb_client.get_comparison, location_id, s, e)
- 
+
 @app.get("/api/gmb/keywords")
-def api_gmb_keywords(location_id: str, months_back: int = Query(1, ge=1, le=18)):
+def api_gmb_keywords(location_id: str, months_back: int = Query(1, ge=1, le=18),
+                      _admin: str = Depends(get_current_admin)):
     rows = _call(gmb_client.get_search_keywords, location_id, months_back)
     return {"location_id": location_id, "rows": rows}
- 
- 
+
+
 # ---- 5) Admin: portfolio view — every client's GMB summary in one call ----
 #         (uses site_gmb_map.json so you don't need account-listing access at all)
- 
+
 @app.get("/api/gmb/portfolio")
-def api_gmb_portfolio(start_date: Optional[str] = None, end_date: Optional[str] = None):
+def api_gmb_portfolio(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                       _admin: str = Depends(get_current_admin)):
     import json, os
     s, e = _dates(start_date, end_date)
     if not os.path.exists("site_gmb_map.json"):
@@ -1174,63 +1205,65 @@ def api_gmb_portfolio(start_date: Optional[str] = None, end_date: Optional[str] 
     with open("site_gmb_map.json", "r") as f:
         location_map = json.load(f)
     return gmb_client.get_portfolio_summary(location_map, s, e)
- 
- 
+
+
 # ---- 6) Admin: write operations — edits the LIVE Google listing, use with care ----
- 
+
 class GmbHoursBody(BaseModel):
     location_id: str
     hours_by_day: dict  # {"MONDAY": [{"open": "09:00", "close": "18:00"}], ...}
- 
+
 @app.post("/api/gmb/hours")
-def api_gmb_update_hours(body: GmbHoursBody):
+def api_gmb_update_hours(body: GmbHoursBody, _admin: str = Depends(get_current_admin)):
     return _call(gmb_client.update_hours, body.location_id, body.hours_by_day)
- 
+
 class GmbDescriptionBody(BaseModel):
     location_id: str
     description: str
- 
+
 @app.post("/api/gmb/description")
-def api_gmb_update_description(body: GmbDescriptionBody):
+def api_gmb_update_description(body: GmbDescriptionBody, _admin: str = Depends(get_current_admin)):
     return _call(gmb_client.update_description, body.location_id, body.description)
- 
+
 @app.get("/api/gmb/categories/search")
-def api_gmb_search_categories(query: str, region_code: str = "IN"):
+def api_gmb_search_categories(query: str, region_code: str = "IN", _admin: str = Depends(get_current_admin)):
     return {"categories": _call(gmb_client.search_categories, query, region_code)}
- 
- 
+
+
 # ---- 7) Client-scoped read-only endpoints (mirror /api/client/ga4/*) ----
-#         NOTE: like GA4's property_id, location_id here comes from the query
-#         param and is NOT locked to the client's JWT. If you want the same
-#         lockdown GSC's site_url gets, add a gmb_location_id field to each
-#         client record in client_auth.py (next to ga4_property_id) and pull
-#         it from the token instead of trusting the query param.
- 
+#         location_id is now resolved server-side from the client's JWT via
+#         get_client_gmb_location — a client can no longer request another
+#         client's GMB data by editing the query string.
+
 @app.get("/api/client/gmb/summary")
-def api_client_gmb_summary(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                            site_url: str = Depends(get_client_site)):
+def api_client_gmb_summary(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                            site_url: str = Depends(get_client_site),
+                            location_id: str = Depends(get_client_gmb_location)):
     s, e = _dates(start_date, end_date)
     data = _call(gmb_client.get_summary, location_id, s, e)
     return {"site_url": site_url, "location_id": location_id, "start_date": s, "end_date": e, **data}
- 
+
 @app.get("/api/client/gmb/trend")
-def api_client_gmb_trend(location_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
-                          site_url: str = Depends(get_client_site)):
+def api_client_gmb_trend(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                          site_url: str = Depends(get_client_site),
+                          location_id: str = Depends(get_client_gmb_location)):
     s, e = _dates(start_date, end_date)
     rows = _call(gmb_client.get_trend, location_id, s, e)
     return {"site_url": site_url, "location_id": location_id, "start_date": s, "end_date": e, "rows": rows}
- 
+
 @app.get("/api/client/gmb/keywords")
-def api_client_gmb_keywords(location_id: str, months_back: int = Query(1, ge=1, le=18),
-                             site_url: str = Depends(get_client_site)):
+def api_client_gmb_keywords(months_back: int = Query(1, ge=1, le=18),
+                             site_url: str = Depends(get_client_site),
+                             location_id: str = Depends(get_client_gmb_location)):
     rows = _call(gmb_client.get_search_keywords, location_id, months_back)
     return {"site_url": site_url, "location_id": location_id, "rows": rows}
- 
+
 @app.get("/api/client/gmb/location")
-def api_client_gmb_location(location_id: str, site_url: str = Depends(get_client_site)):
+def api_client_gmb_location(site_url: str = Depends(get_client_site),
+                             location_id: str = Depends(get_client_gmb_location)):
     data = _call(gmb_client.get_location_details, location_id)
     return {"site_url": site_url, **data}
-    
+
 @app.get("/api/ga4/list-properties")
 def api_ga4_list_properties(_admin: str = Depends(get_current_admin)):
     return {"properties": _call(ga4_client.list_all_properties)}

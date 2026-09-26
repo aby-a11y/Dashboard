@@ -30,11 +30,16 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-SCOPES = [
+BASE_SCOPES = [
     "https://www.googleapis.com/auth/webmasters.readonly",
     "https://www.googleapis.com/auth/analytics.readonly",
-    "https://www.googleapis.com/auth/business.manage",
 ]
+GMB_SCOPE = "https://www.googleapis.com/auth/business.manage"
+# Requested opportunistically. Not every Google Cloud project has GMB access
+# approved (Google approves the Business Profile API per-project, not per
+# Google account), so this scope alone must never be allowed to break GSC/GA4/
+# ranking for an account that doesn't have it yet — see get_credentials().
+SCOPES = BASE_SCOPES + [GMB_SCOPE]
 
 ACCOUNTS_DIR = "accounts"
 ACCOUNTS_FILE = "accounts.json"          # {account_id: {"label": "my@gmail.com"}}
@@ -178,6 +183,10 @@ def get_service():
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
 
 
+def _is_invalid_scope_error(ex):
+    return "invalid_scope" in str(ex).lower()
+
+
 def get_credentials():
     account_id = get_active_account_id()
     if not account_id:
@@ -197,15 +206,32 @@ def get_credentials():
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except Exception as ex:
+                if not _is_invalid_scope_error(ex):
+                    raise
+                # This account's Google Cloud project doesn't have the GMB
+                # scope approved/registered yet. Fall back to the base
+                # scopes so GSC, GA4 and ranking keep working for this
+                # account — GMB simply stays unavailable here until that
+                # project's own GBP API access is approved.
+                creds = Credentials.from_authorized_user_file(paths["token"], BASE_SCOPES)
+                creds.refresh(Request())
         else:
             if not os.path.exists(paths["client_secret"]):
                 raise RuntimeError(
                     f"Missing {paths['client_secret']} — put that account's OAuth "
                     f"client secret file there, then switch to it again."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], SCOPES)
-            creds = flow.run_local_server(port=0, prompt="select_account")
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], SCOPES)
+                creds = flow.run_local_server(port=0, prompt="select_account")
+            except Exception as ex:
+                if not _is_invalid_scope_error(ex):
+                    raise
+                flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], BASE_SCOPES)
+                creds = flow.run_local_server(port=0, prompt="select_account")
 
         with open(paths["token"], "w") as f:
             f.write(creds.to_json())
