@@ -21,3 +21,12 @@ jobs.sqlite
 share_jwt_secret.txt
 gsc_query_cache.json
 Untitled-1.sqlite3-query
+# Redis data
+dump.rdb
+appendonly.aof
+*.rdb
+*.aof
+
+# Redis local data directory
+redis-data/
+redis_data/
