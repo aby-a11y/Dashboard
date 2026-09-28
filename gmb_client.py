@@ -14,6 +14,7 @@ Optional (only needed for list_accounts / list_locations_for_account):
     in site_gmb_map.json (recommended for 100+ clients — more reliable, no extra API).
 """
 
+import time
 from datetime import date, timedelta
 from googleapiclient.discovery import build
 
@@ -21,7 +22,7 @@ import gsc_client
 from gsc_client import get_credentials, default_date_range  # reuse shared auth + date helper
 from domain_utils import extract_domain
 from db import get_session
-from models import SiteGMBMap
+from models import SiteGMBMap, GmbLocationAccount
 
 # Full metric set — Business Profile Performance API DailyMetric enum.
 # https://developers.google.com/my-business/reference/performance/rest/v1/DailyMetric
@@ -47,22 +48,59 @@ _LOCATION_READ_MASK = (
 
 # ---------------- service builders ----------------
 
+_probe_failed_at = {}          # location_id -> time.monotonic() of last "no account worked"
+_PROBE_RETRY_SECONDS = 300     # don't re-probe every account on every request for a bad ID
+
+
+def _probe_account_for_location(location_id):
+    """Finds which registered account can actually read this GMB location by
+    trying each one once (active account first), then remembers the winner in
+    gmb_location_account so later calls skip straight to it. This is what
+    makes GMB work when only ONE of your accounts has Business Profile access
+    — the site's Search Console account and the listing's GMB account are
+    often different, and a token without the business.manage grant just
+    returns 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT. Returns None if no account works."""
+    last_fail = _probe_failed_at.get(location_id)
+    if last_fail and time.monotonic() - last_fail < _PROBE_RETRY_SECONDS:
+        return None
+
+    all_ids = [a["account_id"] for a in gsc_client.list_accounts()]
+    active = gsc_client.get_active_account_id()
+    ordered = ([active] if active in all_ids else []) + [a for a in all_ids if a != active]
+
+    for account_id in ordered:
+        try:
+            creds = gsc_client.get_credentials_for(account_id, interactive=False)
+            service = build("mybusinessbusinessinformation", "v1", credentials=creds)
+            service.locations().get(name=f"locations/{location_id}", readMask="name").execute()
+        except Exception:
+            continue  # no token yet / no GMB grant / not a manager of this listing — try the next
+        with get_session() as session:
+            row = session.get(GmbLocationAccount, location_id)
+            if row is None:
+                row = GmbLocationAccount(location_id=location_id, gsc_account_id=account_id)
+            else:
+                row.gsc_account_id = account_id
+            session.add(row)
+        _probe_failed_at.pop(location_id, None)
+        return account_id
+
+    _probe_failed_at[location_id] = time.monotonic()
+    return None
+
+
 def _resolve_account_for_location(location_id):
-    """Reverse lookup: which site is this GMB location mapped to
-    (site_gmb_map), then which registered account owns that site
-    (site_account_map) — same auto-routing as GA4, so a GMB call
-    automatically uses the right one of your 5 Gmail accounts."""
+    """Which registered account to use for this GMB location: the one recorded
+    in gmb_location_account (set by auto-discovery or an earlier probe), else
+    probe the accounts now. None means nothing worked — caller falls back to
+    the active account so the real Google error still surfaces."""
     if not location_id:
         return None
     with get_session() as session:
-        from models import SiteAccountMap
-        gmb_row = session.query(SiteGMBMap).filter(
-            SiteGMBMap.gmb_location_id == location_id
-        ).first()
-        if not gmb_row:
-            return None
-        acct_row = session.get(SiteAccountMap, gmb_row.site_url)
-        return acct_row.gsc_account_id if acct_row else None
+        row = session.get(GmbLocationAccount, location_id)
+        if row:
+            return row.gsc_account_id
+    return _probe_account_for_location(location_id)
 
 
 def _creds_for_location(location_id=None):
@@ -124,6 +162,7 @@ def discover_location_map(known_site_urls):
     domain_to_site = {extract_domain(u): u for u in known_site_urls}
     unmatched, needs_login = [], []
     found = {}  # site_url -> location_id, resolved in memory first (first wins)
+    loc_account = {}  # location_id -> account_id it was found under (first wins)
 
     for account in gsc_client.list_accounts():
         account_id = account["account_id"]
@@ -147,6 +186,7 @@ def discover_location_map(known_site_urls):
                 continue
             for loc in resp.get("locations", []):
                 location = _shape_location(loc)
+                loc_account.setdefault(location["location_id"], account_id)
                 site_url = domain_to_site.get(extract_domain(location["website"] or ""))
                 if not site_url:
                     unmatched.append({"title": location["title"], "location_id": location["location_id"]})
@@ -154,6 +194,13 @@ def discover_location_map(known_site_urls):
                 found.setdefault(site_url, location["location_id"])
 
     with get_session() as session:
+        for location_id, account_id in loc_account.items():
+            arow = session.get(GmbLocationAccount, location_id)
+            if arow is None:
+                arow = GmbLocationAccount(location_id=location_id, gsc_account_id=account_id)
+            else:
+                arow.gsc_account_id = account_id
+            session.add(arow)
         for site_url, location_id in found.items():
             row = session.get(SiteGMBMap, site_url)
             if row is None:
@@ -287,12 +334,12 @@ def get_trend(location_id: str, start_date: str = None, end_date: str = None):
         location=f"locations/{location_id}",
         dailyMetrics=_DAILY_METRICS,
         **{
-            "dailyRange.startDate.year": s.year,
-            "dailyRange.startDate.month": s.month,
-            "dailyRange.startDate.day": s.day,
-            "dailyRange.endDate.year": e.year,
-            "dailyRange.endDate.month": e.month,
-            "dailyRange.endDate.day": e.day,
+            "dailyRange_startDate_year": s.year,
+            "dailyRange_startDate_month": s.month,
+            "dailyRange_startDate_day": s.day,
+            "dailyRange_endDate_year": e.year,
+            "dailyRange_endDate_month": e.month,
+            "dailyRange_endDate_day": e.day,
         },
     ).execute()
 
@@ -357,22 +404,27 @@ def get_search_keywords(location_id: str, months_back: int = 1):
     resp = service.locations().searchkeywords().impressions().monthly().list(
         parent=f"locations/{location_id}",
         **{
-               "monthlyRange.startMonth.year": target.year,
-               "monthlyRange.startMonth.month": target.month,
-               "monthlyRange.endMonth.year": target.year,
-               "monthlyRange.endMonth.month": target.month,
+            "monthlyRange_startMonth_year": target.year,
+            "monthlyRange_startMonth_month": target.month,
+            "monthlyRange_endMonth_year": target.year,
+            "monthlyRange_endMonth_month": target.month,
         },
     ).execute()
 
-    rows = [
-        {
+    def _to_int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
+    rows = []
+    for item in resp.get("searchKeywordsCounts", []):
+        iv = item.get("insightsValue") or {}
+        rows.append({
             "keyword": item.get("searchKeyword"),
-            "impressions": item.get("insightsValue", {}).get("value")
-                or item.get("insightsValue", {}).get("threshold"),
-        }
-        for item in resp.get("searchKeywordsCounts", [])
-    ]
-    rows.sort(key=lambda r: -(r["impressions"] or 0))
+            "impressions": _to_int(iv.get("value") or iv.get("threshold")),
+        })
+    rows.sort(key=lambda r: -r["impressions"])
     return rows
 
 

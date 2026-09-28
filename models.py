@@ -107,3 +107,17 @@ class SiteAccountMap(Base):
 
     site_url = Column(String(512), primary_key=True)
     gsc_account_id = Column(String(128), nullable=False)
+
+
+
+class GmbLocationAccount(Base):
+    """Which registered Google account can actually manage a given GMB
+    location. Filled in automatically: either by auto-discovery (the account
+    the location was found under) or, for a location ID entered by hand, by
+    probing each registered account once and remembering the first that works.
+    Needed because the account that owns a site in Search Console is not
+    necessarily the one with Business Profile access to that site's listing."""
+    __tablename__ = "gmb_location_account"
+
+    location_id = Column(String(256), primary_key=True)
+    gsc_account_id = Column(String(128), nullable=False)

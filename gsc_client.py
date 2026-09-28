@@ -365,7 +365,16 @@ def list_all_sites_across_accounts():
                 # account's pass, so it's UPDATEd in place instead.
                 session.flush()
                 all_sites.append(site_url)
-    return {"sites": sorted(set(all_sites)), "accounts_needing_login": needs_login}
+    def _site_priority(u):
+        if u.startswith("sc-domain:"):
+            return 0
+        if u.startswith("https://"):
+            return 1
+        return 2
+
+    unique_sites = list(dict.fromkeys(all_sites))
+    unique_sites.sort(key=_site_priority)
+    return {"sites": unique_sites, "accounts_needing_login": needs_login}
 
 
 def default_date_range(days=28):

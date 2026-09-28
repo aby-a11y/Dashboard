@@ -171,6 +171,10 @@ def refresh_rankings(site_url, keywords, location=None, gl="us"):
             "previous_position": prior.get("position") if prior else None,
             "previous_checked_at": prior.get("checked_at") if prior else None,
         }
+        # Persist after EVERY keyword: each check costs paid credits, so if a
+        # later keyword raises (rate limit / network), earlier results must
+        # not be thrown away.
+        redis_cache.set_json(_cache_key(site_url), site_cache)
 
     redis_cache.set_json(_cache_key(site_url), site_cache)
     return get_cached_rankings(site_url)
