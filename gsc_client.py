@@ -195,14 +195,30 @@ def get_credentials_for(account_id, interactive=False):
         creds = Credentials.from_authorized_user_file(paths["token"], SCOPES)
 
     if not creds or not creds.valid:
+        degraded = False
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
             except Exception as ex:
                 if not _is_invalid_scope_error(ex):
                     raise
+                # This account's Google Cloud project doesn't currently
+                # grant the business.manage (GMB) scope — refresh with just
+                # the base scopes so GSC/GA4 don't break for this account.
+                # IMPORTANT: this narrowed credential is deliberately NOT
+                # written back to token.json and NOT cached in
+                # _credentials_cache below. Doing so used to permanently
+                # strip GMB access for the account (even after GMB access
+                # was later granted / the project got GMB approved) because
+                # every future load re-read the downgraded token — which is
+                # exactly what caused persistent "insufficient authentication
+                # scopes" 403s on GMB calls for accounts that actually do
+                # have Business Profile access. Keeping the degrade
+                # request-scoped means the next call tries the full SCOPES
+                # again from the untouched token file.
                 creds = Credentials.from_authorized_user_file(paths["token"], BASE_SCOPES)
                 creds.refresh(Request())
+                degraded = True
         elif interactive:
             if not os.path.exists(paths["client_secret"]):
                 raise RuntimeError(
@@ -215,15 +231,18 @@ def get_credentials_for(account_id, interactive=False):
             except Exception as ex:
                 if not _is_invalid_scope_error(ex):
                     raise
+                # Same reasoning as above: don't persist the narrowed grant.
                 flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], BASE_SCOPES)
                 creds = flow.run_local_server(port=0, prompt="select_account")
+                degraded = True
         else:
             raise AccountNeedsLoginError(account_id)
 
-        with open(paths["token"], "w") as f:
-            f.write(creds.to_json())
+        if not degraded:
+            with open(paths["token"], "w") as f:
+                f.write(creds.to_json())
+            _credentials_cache[account_id] = creds
 
-    _credentials_cache[account_id] = creds
     return creds
 
 
@@ -333,6 +352,18 @@ def list_all_sites_across_accounts():
                 else:
                     row.gsc_account_id = account_id
                 session.add(row)
+                # Flush (not commit) immediately: this whole function runs inside
+                # ONE transaction across every registered account. Without this,
+                # a site that two Google accounts both have access to (common
+                # when several team members were granted GSC access) creates two
+                # separate pending SiteAccountMap objects with the same site_url
+                # primary key — session.get() can't see the first one until it's
+                # flushed, since SQLAlchemy's identity map only tracks flushed
+                # objects, not pending ones. Both would then try to INSERT at
+                # commit time and Postgres raises a duplicate key error. Flushing
+                # here makes the first row visible to session.get() on the next
+                # account's pass, so it's UPDATEd in place instead.
+                session.flush()
                 all_sites.append(site_url)
     return {"sites": sorted(set(all_sites)), "accounts_needing_login": needs_login}
 

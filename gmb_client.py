@@ -1,392 +1,692 @@
 """
-Google Business Profile (GMB) client helper.
+Google Search Console client helper.
+Handles OAuth auth + all the data-fetching functions used by the dashboard API.
 
-Reuses the same OAuth credentials as gsc_client/ga4_client (one token,
-business.manage scope must already be granted — see gsc_client.get_credentials()).
+---------------- Multi-account support ----------------
+Different clients' sites can live under different Google accounts (each
+verified in a separate GSC/GA4 login). Instead of one hardcoded
+client_secret.json/token.json, credentials are now organized per "account":
 
-APIs used (must be enabled in the GCP project):
-  - mybusinessbusinessinformation (v1) -> location details, hours, attributes, categories
-  - businessprofileperformance (v1)    -> daily metrics + search keywords
+    accounts/
+      <account_id>/
+        client_secret.json   <- OAuth client secret downloaded from Google Cloud Console
+        token.json           <- created automatically on first login for that account
 
-Optional (only needed for list_accounts / list_locations_for_account):
-  - mybusinessaccountmanagement (v1)   -> enable separately in Cloud Console if you
-    want to browse accounts/locations instead of storing location_id per client
-    in site_gmb_map.json (recommended for 100+ clients — more reliable, no extra API).
+    accounts.json          {account_id: {"label": "my@gmail.com"}}
+    active_account.txt     just the account_id currently in use, e.g. "my_gmail"
+
+Only ONE account is "active" at a time — every GSC/GA4 call uses whichever
+account is active. Switch it via POST /api/admin/accounts/switch (see main.py).
+ga4_client.py reuses get_credentials() from here, so switching accounts here
+switches GA4 too.
 """
 
-from datetime import date, timedelta
+import os
+import json
+import datetime
+import hashlib
+import cache
+from db import get_session
+from models import GscTrackedKeyword, SiteAccountMap
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
-import gsc_client
-from gsc_client import get_credentials, default_date_range  # reuse shared auth + date helper
-from domain_utils import extract_domain
-from db import get_session
-from models import SiteGMBMap
-
-# Full metric set — Business Profile Performance API DailyMetric enum.
-# https://developers.google.com/my-business/reference/performance/rest/v1/DailyMetric
-_DAILY_METRICS = [
-    "BUSINESS_IMPRESSIONS_DESKTOP_MAPS",
-    "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH",
-    "BUSINESS_IMPRESSIONS_MOBILE_MAPS",
-    "BUSINESS_IMPRESSIONS_MOBILE_SEARCH",
-    "BUSINESS_CONVERSATIONS",
-    "BUSINESS_DIRECTION_REQUESTS",
-    "CALL_CLICKS",
-    "WEBSITE_CLICKS",
-    "BUSINESS_BOOKINGS",
-    "BUSINESS_FOOD_ORDERS",
-    "BUSINESS_FOOD_MENU_CLICKS",
+BASE_SCOPES = [
+    "https://www.googleapis.com/auth/webmasters.readonly",
+    "https://www.googleapis.com/auth/analytics.readonly",
 ]
+GMB_SCOPE = "https://www.googleapis.com/auth/business.manage"
+# Requested opportunistically. Not every Google Cloud project has GMB access
+# approved (Google approves the Business Profile API per-project, not per
+# Google account), so this scope alone must never be allowed to break GSC/GA4/
+# ranking for an account that doesn't have it yet — see get_credentials().
+SCOPES = BASE_SCOPES + [GMB_SCOPE]
 
-_LOCATION_READ_MASK = (
-    "name,title,storefrontAddress,phoneNumbers,websiteUri,"
-    "regularHours,metadata,categories,openInfo,profile,latlng"
-)
+ACCOUNTS_DIR = "accounts"
+ACCOUNTS_FILE = "accounts.json"          # {account_id: {"label": "my@gmail.com"}}
+ACTIVE_ACCOUNT_FILE = "active_account.txt"  # just the active account_id, e.g. "my_gmail"
 
+_credentials_cache = {}  # {account_id: Credentials} — keeps every account's token warm in memory
 
-# ---------------- service builders ----------------
+GSC_CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+GSC_CACHE_KEY_PREFIX = "gsc_query_cache:"
 
-def _resolve_account_for_location(location_id):
-    """Reverse lookup: which site is this GMB location mapped to
-    (site_gmb_map), then which registered account owns that site
-    (site_account_map) — same auto-routing as GA4, so a GMB call
-    automatically uses the right one of your 5 Gmail accounts."""
-    if not location_id:
-        return None
-    with get_session() as session:
-        from models import SiteAccountMap
-        gmb_row = session.query(SiteGMBMap).filter(
-            SiteGMBMap.gmb_location_id == location_id
-        ).first()
-        if not gmb_row:
-            return None
-        acct_row = session.get(SiteAccountMap, gmb_row.site_url)
-        return acct_row.gsc_account_id if acct_row else None
+# Redis-backed now (see cache.py) instead of one shared gsc_query_cache.json
+# that every request had to fully read + rewrite. Each entry gets its own
+# key with a native TTL, so there's no full-file load/save and no manual
+# pruning step needed anymore — Redis expires stale entries on its own,
+# which matters once this is fielding queries for 200-300 clients at once.
 
 
-def _creds_for_location(location_id=None):
-    account_id = _resolve_account_for_location(location_id)
-    if account_id:
-        return gsc_client.get_credentials_for(account_id, interactive=True)
-    return get_credentials()  # falls back to the active account (old behaviour)
+def _gsc_cache_key(site_url, dimensions, start_date, end_date, row_limit, filters):
+    payload = json.dumps({
+        "site_url": site_url,
+        "dimensions": dimensions,
+        "start_date": start_date,
+        "end_date": end_date,
+        "row_limit": row_limit,
+        "filters": filters,
+    }, sort_keys=True)
+    return GSC_CACHE_KEY_PREFIX + hashlib.md5(payload.encode()).hexdigest()
 
 
-def get_account_service():
-    return build("mybusinessaccountmanagement", "v1", credentials=get_credentials())
-
-def get_account_service_for(account_id):
-    """Explicit-account version, for the multi-account discovery scan."""
-    creds = gsc_client.get_credentials_for(account_id, interactive=False)
-    return build("mybusinessaccountmanagement", "v1", credentials=creds)
-
-def get_info_service(location_id=None):
-    return build("mybusinessbusinessinformation", "v1", credentials=_creds_for_location(location_id))
-
-def get_performance_service(location_id=None):
-    return build("businessprofileperformance", "v1", credentials=_creds_for_location(location_id))
+def _gsc_cache_get(cache_key):
+    return cache.get_json(cache_key)
 
 
-# ---------------- accounts / locations discovery (optional API) ----------------
+def _gsc_cache_set(cache_key, rows):
+    cache.set_json(cache_key, {"rows": rows}, ttl_seconds=GSC_CACHE_TTL_SECONDS)
+
+
+# ---------------- account registry ----------------
+
+def _load_accounts():
+    if not os.path.exists(ACCOUNTS_FILE):
+        return {}
+    with open(ACCOUNTS_FILE, "r") as f:
+        return json.load(f)
+
+
+def _save_accounts(data):
+    with open(ACCOUNTS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _account_paths(account_id):
+    folder = os.path.join(ACCOUNTS_DIR, account_id)
+    return {
+        "folder": folder,
+        "client_secret": os.path.join(folder, "client_secret.json"),
+        "token": os.path.join(folder, "token.json"),
+    }
+
 
 def list_accounts():
-    """Requires mybusinessaccountmanagement API enabled separately."""
-    service = get_account_service()
-    resp = service.accounts().list().execute()
+    """Returns [{account_id, label, active}] for the admin UI's switcher."""
+    accounts = _load_accounts()
+    active = get_active_account_id()
     return [
-        {"name": a["name"], "account_name": a.get("accountName"), "type": a.get("type")}
-        for a in resp.get("accounts", [])
+        {"account_id": aid, "label": rec.get("label", aid), "active": aid == active}
+        for aid, rec in accounts.items()
     ]
 
-def list_locations_for_account(account_name: str):
-    """account_name looks like 'accounts/1234567890'. Requires mybusinessaccountmanagement."""
-    service = get_info_service()
-    resp = service.accounts().locations().list(
-        parent=account_name, readMask=_LOCATION_READ_MASK,
-    ).execute()
-    return [_shape_location(loc) for loc in resp.get("locations", [])]
+
+def add_account(account_id, label, client_secret_bytes):
+    """Registers a new account and writes its client_secret.json to
+    accounts/<account_id>/client_secret.json. Does NOT log in yet — the
+    first call that needs Google data (e.g. switching to it, then hitting
+    /api/sites) will trigger the OAuth flow and create token.json."""
+    account_id = account_id.strip()
+    if not account_id:
+        raise ValueError("account_id is required")
+
+    paths = _account_paths(account_id)
+    os.makedirs(paths["folder"], exist_ok=True)
+    with open(paths["client_secret"], "wb") as f:
+        f.write(client_secret_bytes)
+
+    accounts = _load_accounts()
+    accounts[account_id] = {"label": label or account_id}
+    _save_accounts(accounts)
+    return {"account_id": account_id, "label": accounts[account_id]["label"]}
 
 
-# ---------------- multi-account auto-discovery ----------------
+def delete_account(account_id):
+    accounts = _load_accounts()
+    if account_id not in accounts:
+        return False
+    del accounts[account_id]
+    _save_accounts(accounts)
+    _credentials_cache.pop(account_id, None)
+    # NOTE: intentionally not deleting accounts/<account_id>/ from disk —
+    # avoids accidentally nuking a token.json you'd need to re-auth from
+    # scratch. Remove the folder manually if you're sure.
+    return True
 
-def discover_location_map(known_site_urls):
-    """Scans every registered account for GMB locations, matches each
-    location's website URL (by domain) against known_site_urls (the sites
-    gsc_client.list_all_sites_across_accounts() just found), and auto-fills
-    site_gmb_map for every match. Requires the mybusinessaccountmanagement
-    API enabled for that account's Cloud project (same requirement as
-    list_accounts() above) — an account without it is just skipped, not
-    treated as an error, since not every one of your 5 accounts necessarily
-    has GMB API access approved yet.
 
-    Returns {"matched": [{"site_url", "location_id"}], "unmatched_locations":
-    [{"title", "location_id"}], "accounts_needing_login": [...]}."""
-    domain_to_site = {extract_domain(u): u for u in known_site_urls}
-    matched, unmatched, needs_login = [], [], []
+def get_active_account_id():
+    if os.path.exists(ACTIVE_ACCOUNT_FILE):
+        with open(ACTIVE_ACCOUNT_FILE, "r") as f:
+            aid = f.read().strip()
+            if aid:
+                return aid
+    # Fallback: no active_account.txt yet — use the first registered account
+    accounts = _load_accounts()
+    if accounts:
+        return next(iter(accounts))
+    return None
 
+
+def set_active_account(account_id):
+    accounts = _load_accounts()
+    if account_id not in accounts:
+        raise ValueError(f"No such account_id: {account_id}")
+    with open(ACTIVE_ACCOUNT_FILE, "w") as f:
+        f.write(account_id)
+    return account_id
+
+
+# ---------------- credentials (per active account) ----------------
+
+class AccountNeedsLoginError(Exception):
+    """Raised by get_credentials_for(..., interactive=False) when an
+    account has no usable token yet. Used during multi-account scans so
+    one never-logged-in account doesn't pop open a browser window (or
+    worse, 5 of them at once) — the scan just skips it and reports it."""
+    def __init__(self, account_id):
+        self.account_id = account_id
+        super().__init__(f"Account '{account_id}' needs an interactive login "
+                          f"(switch to it once via the account switcher).")
+
+
+def get_credentials_for(account_id, interactive=False):
+    """Like get_credentials() but for an explicit account_id — not
+    necessarily the active one. interactive=False (used by bulk scans)
+    raises AccountNeedsLoginError instead of launching a browser."""
+    creds = _credentials_cache.get(account_id)
+    if creds and creds.valid:
+        return creds
+
+    paths = _account_paths(account_id)
+    creds = None
+    if os.path.exists(paths["token"]):
+        creds = Credentials.from_authorized_user_file(paths["token"], SCOPES)
+
+    if not creds or not creds.valid:
+        degraded = False
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except Exception as ex:
+                if not _is_invalid_scope_error(ex):
+                    raise
+                # This account's Google Cloud project doesn't currently
+                # grant the business.manage (GMB) scope — refresh with just
+                # the base scopes so GSC/GA4 don't break for this account.
+                # IMPORTANT: this narrowed credential is deliberately NOT
+                # written back to token.json and NOT cached in
+                # _credentials_cache below. Doing so used to permanently
+                # strip GMB access for the account (even after GMB access
+                # was later granted / the project got GMB approved) because
+                # every future load re-read the downgraded token — which is
+                # exactly what caused persistent "insufficient authentication
+                # scopes" 403s on GMB calls for accounts that actually do
+                # have Business Profile access. Keeping the degrade
+                # request-scoped means the next call tries the full SCOPES
+                # again from the untouched token file.
+                creds = Credentials.from_authorized_user_file(paths["token"], BASE_SCOPES)
+                creds.refresh(Request())
+                degraded = True
+        elif interactive:
+            if not os.path.exists(paths["client_secret"]):
+                raise RuntimeError(
+                    f"Missing {paths['client_secret']} — put that account's OAuth "
+                    f"client secret file there, then switch to it again."
+                )
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], SCOPES)
+                creds = flow.run_local_server(port=0, prompt="select_account")
+            except Exception as ex:
+                if not _is_invalid_scope_error(ex):
+                    raise
+                # Same reasoning as above: don't persist the narrowed grant.
+                flow = InstalledAppFlow.from_client_secrets_file(paths["client_secret"], BASE_SCOPES)
+                creds = flow.run_local_server(port=0, prompt="select_account")
+                degraded = True
+        else:
+            raise AccountNeedsLoginError(account_id)
+
+        if not degraded:
+            with open(paths["token"], "w") as f:
+                f.write(creds.to_json())
+            _credentials_cache[account_id] = creds
+
+    return creds
+
+
+def resolve_account_for_site(site_url):
+    """Which registered account actually has this site — from the
+    auto-discovered site_account_map (see list_all_sites_across_accounts()).
+    Falls back to the currently active account if this site hasn't been
+    discovered yet, so nothing breaks for a brand-new/unmapped site —
+    just re-run auto-discovery, or switch accounts manually this once."""
     with get_session() as session:
-        for account in gsc_client.list_accounts():
+        row = session.get(SiteAccountMap, site_url)
+        if row:
+            return row.gsc_account_id
+    return get_active_account_id()
+
+
+def get_service(site_url=None):
+    """Build a fresh API client + HTTP connection for every call.
+    The underlying httplib2 connection is NOT safe to share across
+    concurrent requests, so we deliberately do not cache the service.
+    Pass site_url so this automatically uses whichever of your registered
+    accounts actually has that site (see resolve_account_for_site) instead
+    of always using whatever account happens to be "active"."""
+    creds = get_credentials(site_url)
+    return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+
+
+def _is_invalid_scope_error(ex):
+    return "invalid_scope" in str(ex).lower()
+
+
+def get_credentials(site_url=None):
+    account_id = resolve_account_for_site(site_url) if site_url else get_active_account_id()
+    if not account_id:
+        raise RuntimeError(
+            "No Google account configured yet — add one via POST /api/admin/accounts "
+            "(see accounts/ folder layout in gsc_client.py)."
+        )
+    return get_credentials_for(account_id, interactive=True)
+
+
+def list_sites():
+    cache_key = GSC_CACHE_KEY_PREFIX + "list_sites::" + (get_active_account_id() or "")
+    entry = _gsc_cache_get(cache_key)
+    if entry:
+        return entry["rows"]
+
+    service = get_service()
+    result = service.sites().list().execute()
+    sites = [s["siteUrl"] for s in result.get("siteEntry", [])]
+
+    _gsc_cache_set(cache_key, sites)
+    return sites
+
+
+def list_sites_for(account_id):
+    """Same as list_sites() but for an explicit account, not necessarily
+    the active one — used by the multi-account scan below so it never
+    needs to flip active_account.txt just to look."""
+    cache_key = GSC_CACHE_KEY_PREFIX + "list_sites::" + account_id
+    entry = _gsc_cache_get(cache_key)
+    if entry:
+        return entry["rows"]
+
+    creds = get_credentials_for(account_id, interactive=False)
+    service = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+    result = service.sites().list().execute()
+    sites = [s["siteUrl"] for s in result.get("siteEntry", [])]
+
+    _gsc_cache_set(cache_key, sites)
+    return sites
+
+
+def list_all_sites_across_accounts():
+    """Scans every registered account (all 5 Gmail logins, say) for the
+    sites it has Search Console access to, and auto-fills site_account_map
+    with which account owns each one. This is what makes a newly-granted
+    client access show up in the dashboard on its own — no manual account
+    switch, no manual DB edit. An account with no valid token yet (never
+    logged into once) is skipped, not blocked on — it's reported back so
+    you know to log into it once via the account switcher.
+
+    Returns {"sites": [site_url, ...], "accounts_needing_login": [account_id, ...]}."""
+    all_sites = []
+    needs_login = []
+    with get_session() as session:
+        for account in list_accounts():
             account_id = account["account_id"]
             try:
-                acct_service = get_account_service_for(account_id)
-                accounts_resp = acct_service.accounts().list().execute()
-            except gsc_client.AccountNeedsLoginError:
+                sites = list_sites_for(account_id)
+            except AccountNeedsLoginError:
                 needs_login.append(account_id)
                 continue
             except Exception:
-                continue  # mybusinessaccountmanagement not enabled for this account yet
-
-            info_service = build("mybusinessbusinessinformation", "v1",
-                                  credentials=gsc_client.get_credentials_for(account_id, interactive=False))
-            for gmb_account in accounts_resp.get("accounts", []):
-                try:
-                    resp = info_service.accounts().locations().list(
-                        parent=gmb_account["name"], readMask=_LOCATION_READ_MASK,
-                    ).execute()
-                except Exception:
-                    continue
-                for loc in resp.get("locations", []):
-                    location = _shape_location(loc)
-                    site_url = domain_to_site.get(extract_domain(location["website"] or ""))
-                    if not site_url:
-                        unmatched.append({"title": location["title"], "location_id": location["location_id"]})
-                        continue
-                    row = session.get(SiteGMBMap, site_url)
-                    if row is None:
-                        row = SiteGMBMap(site_url=site_url, gmb_location_id=location["location_id"])
-                    else:
-                        row.gmb_location_id = location["location_id"]
-                    session.add(row)
-                    matched.append({"site_url": site_url, "location_id": location["location_id"]})
-
-    return {"matched": matched, "unmatched_locations": unmatched, "accounts_needing_login": needs_login}
-
-
-# ---------------- location profile (no account API needed if you already have location_id) ----------------
-
-def _format_address(addr):
-    if not addr:
-        return None
-    parts = addr.get("addressLines", []) + [
-        addr.get("locality"), addr.get("administrativeArea"), addr.get("postalCode")
-    ]
-    return ", ".join(p for p in parts if p)
-
-def _format_hours(regular_hours):
-    if not regular_hours:
-        return None
-    out = {}
-    for period in regular_hours.get("periods", []):
-        day = period.get("openDay")
-        out.setdefault(day, []).append({
-            "open": period.get("openTime", {}).get("hours", 0),
-            "close": period.get("closeTime", {}).get("hours", 0),
-        })
-    return out
-
-def _shape_location(loc):
-    metadata = loc.get("metadata") or {}
-    open_info = loc.get("openInfo") or {}
-    primary_cat = ((loc.get("categories") or {}).get("primaryCategory") or {})
-    latlng = loc.get("latlng") or {}
-    return {
-        "location_id": loc["name"].split("/")[-1],
-        "title": loc.get("title"),
-        "address": _format_address(loc.get("storefrontAddress")),
-        "phone": (loc.get("phoneNumbers") or {}).get("primaryPhone"),
-        "website": loc.get("websiteUri"),
-        "maps_uri": metadata.get("mapsUri"),
-        "new_review_uri": metadata.get("newReviewUri"),
-        "primary_category": primary_cat.get("displayName"),
-        "additional_categories": [c.get("displayName") for c in (loc.get("categories") or {}).get("additionalCategories", [])],
-        "labels": loc.get("labels", []),
-        "status": open_info.get("status"),  # OPEN / CLOSED_TEMPORARILY / CLOSED_PERMANENTLY
-        "hours": _format_hours(loc.get("regularHours")),
-        "description": (loc.get("profile") or {}).get("description"),
-        "lat": latlng.get("latitude"),
-        "lng": latlng.get("longitude"),
-        "can_update": metadata.get("canUpdate", False),
-        "duplicate_location": metadata.get("duplicate"),
-    }
-
-def get_location_details(location_id: str):
-    """Full profile for one location. Only needs Business Information API —
-    no account listing required if you already have the location_id."""
-    service = get_info_service(location_id)
-    loc = service.locations().get(
-        name=f"locations/{location_id}", readMask=_LOCATION_READ_MASK,
-    ).execute()
-    return _shape_location(loc)
-
-def get_locations_batch(location_ids: list):
-    """Fetch details for several location_ids in one pass — used for the
-    admin portfolio view / multi-client summary. Not a true batch API call
-    (Business Information API has no batchGet for full reads), just loops;
-    fine for a few dozen at a time."""
-    return [get_location_details(lid) for lid in location_ids]
+                # Token exists but refresh failed (expired/revoked), that
+                # account's GCP project doesn't have the Search Console API
+                # enabled, etc. Skip just this one account instead of
+                # failing site-loading for every client — same treatment
+                # as "needs login", since re-switching to it (which
+                # re-triggers the OAuth flow) fixes both cases.
+                needs_login.append(account_id)
+                continue
+            for site_url in sites:
+                row = session.get(SiteAccountMap, site_url)
+                if row is None:
+                    row = SiteAccountMap(site_url=site_url, gsc_account_id=account_id)
+                else:
+                    row.gsc_account_id = account_id
+                session.add(row)
+                # Flush (not commit) immediately: this whole function runs inside
+                # ONE transaction across every registered account. Without this,
+                # a site that two Google accounts both have access to (common
+                # when several team members were granted GSC access) creates two
+                # separate pending SiteAccountMap objects with the same site_url
+                # primary key — session.get() can't see the first one until it's
+                # flushed, since SQLAlchemy's identity map only tracks flushed
+                # objects, not pending ones. Both would then try to INSERT at
+                # commit time and Postgres raises a duplicate key error. Flushing
+                # here makes the first row visible to session.get() on the next
+                # account's pass, so it's UPDATEd in place instead.
+                session.flush()
+                all_sites.append(site_url)
+    return {"sites": sorted(set(all_sites)), "accounts_needing_login": needs_login}
 
 
-# ---------------- write operations (use with care — edits the LIVE listing) ----------------
-
-def update_hours(location_id: str, hours_by_day: dict):
-    """hours_by_day: {"MONDAY": [{"open": "09:00", "close": "18:00"}], ...}
-    Overwrites regularHours entirely — pass the FULL week, not a partial patch."""
-    periods = []
-    for day, ranges in hours_by_day.items():
-        for r in ranges:
-            oh, om = r["open"].split(":")
-            ch, cm = r["close"].split(":")
-            periods.append({
-                "openDay": day,
-                "openTime": {"hours": int(oh), "minutes": int(om)},
-                "closeDay": day,
-                "closeTime": {"hours": int(ch), "minutes": int(cm)},
-            })
-    service = get_info_service(location_id)
-    return service.locations().patch(
-        name=f"locations/{location_id}",
-        updateMask="regularHours",
-        body={"regularHours": {"periods": periods}},
-    ).execute()
-
-def update_description(location_id: str, description: str):
-    service = get_info_service(location_id)
-    return service.locations().patch(
-        name=f"locations/{location_id}",
-        updateMask="profile.description",
-        body={"profile": {"description": description}},
-    ).execute()
+def default_date_range(days=28):
+    """GSC data usually has a 2-3 day delay, so end 3 days ago."""
+    end = datetime.date.today() - datetime.timedelta(days=3)
+    start = end - datetime.timedelta(days=days)
+    return start.isoformat(), end.isoformat()
 
 
-# ---------------- category search (for onboarding new listings) ----------------
-
-def search_categories(query: str, region_code: str = "IN", language_code: str = "en"):
-    service = get_info_service()
-    resp = service.categories().list(
-        regionCode=region_code, languageCode=language_code,
-        filter=f'displayName="{query}"', view="BASIC",
-    ).execute()
-    return [{"category_id": c["name"], "display_name": c.get("displayName")} for c in resp.get("categories", [])]
-
-
-# ---------------- performance metrics ----------------
-
-def get_trend(location_id: str, start_date: str = None, end_date: str = None):
-    """Daily values for every metric in _DAILY_METRICS, one row per day."""
+def query_search_analytics(site_url, dimensions, start_date=None, end_date=None,
+                            row_limit=100, filters=None):
+    """Generic search analytics query — results are cached to disk for
+    GSC_CACHE_TTL_SECONDS (24h) since GSC data itself only refreshes once
+    a day or two anyway. This is the single choke point every GSC-backed
+    endpoint (admin dashboard AND client portal) goes through, so caching
+    here caches everything downstream: summary, queries, pages, trend,
+    rank tracker, keyword history — all of it. Cuts real Search Console
+    API calls, server load, and GSC quota usage massively."""
     if not start_date or not end_date:
         start_date, end_date = default_date_range()
-    s = date.fromisoformat(start_date)
-    e = date.fromisoformat(end_date)
 
-    service = get_performance_service(location_id)
-    resp = service.locations().fetchMultiDailyMetricsTimeSeries(
-        location=f"locations/{location_id}",
-        dailyMetrics=_DAILY_METRICS,
-        **{
-            "dailyRange.startDate.year": s.year,
-            "dailyRange.startDate.month": s.month,
-            "dailyRange.startDate.day": s.day,
-            "dailyRange.endDate.year": e.year,
-            "dailyRange.endDate.month": e.month,
-            "dailyRange.endDate.day": e.day,
-        },
-    ).execute()
+    cache_key = _gsc_cache_key(site_url, dimensions, start_date, end_date, row_limit, filters)
+    entry = _gsc_cache_get(cache_key)
+    if entry:
+        return entry["rows"]
 
-    by_date = {}
-    for series in resp.get("multiDailyMetricTimeSeries", []):
-        for ts in series.get("dailyMetricTimeSeries", []):
-            metric = ts["dailyMetric"]
-            for dp in ts.get("timeSeries", {}).get("datedValues", []):
-                d = dp.get("date", {})
-                day_str = f"{d.get('year')}-{d.get('month', 0):02d}-{d.get('day', 0):02d}"
-                by_date.setdefault(day_str, {"date": day_str})
-                by_date[day_str][metric.lower()] = int(dp.get("value", 0))
+    body = {
+        "startDate": start_date,
+        "endDate": end_date,
+        "dimensions": dimensions,
+        "rowLimit": row_limit,
+    }
+    if filters:
+        body["dimensionFilterGroups"] = [{"filters": filters}]
 
-    rows = list(by_date.values())
-    rows.sort(key=lambda r: r["date"])
+    service = get_service(site_url)
+    response = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
+    rows = response.get("rows", [])
+
+    _gsc_cache_set(cache_key, rows)
     return rows
 
-def _totals(rows):
-    totals = {m.lower(): 0 for m in _DAILY_METRICS}
-    for r in rows:
-        for m in totals:
-            totals[m] += r.get(m, 0)
-    total_impressions = sum(totals[m] for m in totals if m.startswith("business_impressions"))
+
+def get_summary(site_url, start_date=None, end_date=None):
+    """Overall totals for the period (no dimension breakdown)."""
+    rows = query_search_analytics(site_url, dimensions=[], start_date=start_date,
+                                   end_date=end_date, row_limit=1)
+    if not rows:
+        return {"clicks": 0, "impressions": 0, "ctr": 0, "position": 0}
+    r = rows[0]
     return {
-        "total_impressions": total_impressions,
-        "website_clicks": totals.get("website_clicks", 0),
-        "call_clicks": totals.get("call_clicks", 0),
-        "direction_requests": totals.get("business_direction_requests", 0),
-        "conversations": totals.get("business_conversations", 0),
-        "bookings": totals.get("business_bookings", 0),
-        "food_orders": totals.get("business_food_orders", 0),
-        "food_menu_clicks": totals.get("business_food_menu_clicks", 0),
+        "clicks": r.get("clicks", 0),
+        "impressions": r.get("impressions", 0),
+        "ctr": round(r.get("ctr", 0) * 100, 2),
+        "position": round(r.get("position", 0), 1),
     }
 
-def get_summary(location_id: str, start_date: str = None, end_date: str = None):
-    return _totals(get_trend(location_id, start_date, end_date))
 
-def get_comparison(location_id: str, start_date: str, end_date: str):
-    """Current period vs the immediately preceding period of equal length —
-    same convention as gsc_client.get_comparison."""
-    s = date.fromisoformat(start_date)
-    e = date.fromisoformat(end_date)
-    days = (e - s).days + 1
-    prev_end = s - timedelta(days=1)
-    prev_start = prev_end - timedelta(days=days - 1)
-
-    current = get_summary(location_id, start_date, end_date)
-    previous = get_summary(location_id, prev_start.isoformat(), prev_end.isoformat())
-    return {"current": current, "previous": previous,
-            "previous_start": prev_start.isoformat(), "previous_end": prev_end.isoformat()}
-
-def get_search_keywords(location_id: str, months_back: int = 1):
-    """Search terms people used to find this listing — monthly only,
-    that's the finest grain the Performance API exposes for this metric."""
-    today = date.today()
-    first_of_this_month = today.replace(day=1)
-    target = (first_of_this_month - timedelta(days=1)).replace(day=1)
-    for _ in range(months_back - 1):
-        target = (target - timedelta(days=1)).replace(day=1)
-
-    service = get_performance_service(location_id)
-    resp = service.locations().searchkeywords().impressions().monthly().list(
-        parent=f"locations/{location_id}",
-        **{
-               "monthlyRange.startMonth.year": target.year,
-               "monthlyRange.startMonth.month": target.month,
-               "monthlyRange.endMonth.year": target.year,
-               "monthlyRange.endMonth.month": target.month,
-        },
-    ).execute()
-
-    rows = [
+def get_queries(site_url, start_date=None, end_date=None, limit=25):
+    rows = query_search_analytics(site_url, dimensions=["query"], start_date=start_date,
+                                   end_date=end_date, row_limit=limit)
+    return [
         {
-            "keyword": item.get("searchKeyword"),
-            "impressions": item.get("insightsValue", {}).get("value")
-                or item.get("insightsValue", {}).get("threshold"),
+            "query": r["keys"][0],
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+            "ctr": round(r.get("ctr", 0) * 100, 2),
+            "position": round(r.get("position", 0), 1),
         }
-        for item in resp.get("searchKeywordsCounts", [])
+        for r in rows
     ]
-    rows.sort(key=lambda r: -(r["impressions"] or 0))
-    return rows
 
 
-# ---------------- portfolio view (across many/all clients at once) ----------------
+def get_pages(site_url, start_date=None, end_date=None, limit=25):
+    rows = query_search_analytics(site_url, dimensions=["page"], start_date=start_date,
+                                   end_date=end_date, row_limit=limit)
+    return [
+        {
+            "page": r["keys"][0],
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+            "ctr": round(r.get("ctr", 0) * 100, 2),
+            "position": round(r.get("position", 0), 1),
+        }
+        for r in rows
+    ]
 
-def get_portfolio_summary(location_ids: dict, start_date: str = None, end_date: str = None):
-    """location_ids: {site_url: location_id} — e.g. loaded straight from
-    site_gmb_map.json. Returns one summary row per client, plus errors for
-    any location that failed (e.g. access not granted yet), so one bad
-    client doesn't 500 the whole dashboard."""
+
+def get_devices(site_url, start_date=None, end_date=None):
+    rows = query_search_analytics(site_url, dimensions=["device"], start_date=start_date,
+                                   end_date=end_date, row_limit=10)
+    return [
+        {
+            "device": r["keys"][0],
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+            "ctr": round(r.get("ctr", 0) * 100, 2),
+            "position": round(r.get("position", 0), 1),
+        }
+        for r in rows
+    ]
+
+
+def get_countries(site_url, start_date=None, end_date=None, limit=15):
+    rows = query_search_analytics(site_url, dimensions=["country"], start_date=start_date,
+                                   end_date=end_date, row_limit=limit)
+    return [
+        {
+            "country": r["keys"][0],
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+            "ctr": round(r.get("ctr", 0) * 100, 2),
+            "position": round(r.get("position", 0), 1),
+        }
+        for r in rows
+    ]
+
+
+def get_trend(site_url, start_date=None, end_date=None):
+    """Daily clicks/impressions trend for charting."""
+    rows = query_search_analytics(site_url, dimensions=["date"], start_date=start_date,
+                                   end_date=end_date, row_limit=1000)
+    rows.sort(key=lambda r: r["keys"][0])
+    return [
+        {
+            "date": r["keys"][0],
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+            "ctr": round(r.get("ctr", 0) * 100, 2),
+            "position": round(r.get("position", 0), 1),
+        }
+        for r in rows
+    ]
+
+
+def _previous_period(start_date, end_date):
+    """Given a date range, return the immediately preceding period of the same length."""
+    s = datetime.date.fromisoformat(start_date)
+    e = datetime.date.fromisoformat(end_date)
+    length = (e - s).days
+    prev_end = s - datetime.timedelta(days=1)
+    prev_start = prev_end - datetime.timedelta(days=length)
+    return prev_start.isoformat(), prev_end.isoformat()
+
+
+def _pct_change(current, previous):
+    if previous == 0:
+        return None  # can't compute a meaningful % change from zero
+    return round(((current - previous) / previous) * 100, 1)
+
+
+def get_comparison(site_url, start_date=None, end_date=None):
+    """Current period vs. the immediately preceding period of the same length."""
     if not start_date or not end_date:
         start_date, end_date = default_date_range()
-    rows, errors = [], []
-    for site_url, loc_id in location_ids.items():
-        try:
-            data = get_summary(loc_id, start_date, end_date)
-            rows.append({"site_url": site_url, "location_id": loc_id, **data})
-        except Exception as ex:
-            errors.append({"site_url": site_url, "location_id": loc_id, "error": str(ex)})
-    rows.sort(key=lambda r: -r["total_impressions"])
-    return {"start_date": start_date, "end_date": end_date, "rows": rows, "errors": errors}
+    prev_start, prev_end = _previous_period(start_date, end_date)
+
+    current = get_summary(site_url, start_date, end_date)
+    previous = get_summary(site_url, prev_start, prev_end)
+
+    return {
+        "current_period": {"start": start_date, "end": end_date, **current},
+        "previous_period": {"start": prev_start, "end": prev_end, **previous},
+        "change": {
+            "clicks_pct": _pct_change(current["clicks"], previous["clicks"]),
+            "impressions_pct": _pct_change(current["impressions"], previous["impressions"]),
+            "ctr_pct": _pct_change(current["ctr"], previous["ctr"]),
+            # position is "lower is better" — report the raw point difference, negative = improved
+            "position_change": round(current["position"] - previous["position"], 1),
+        },
+    }
+
+
+def get_movers(site_url, start_date=None, end_date=None, limit=10, min_impressions=5):
+    """Queries whose average position improved or declined the most between
+    the current period and the immediately preceding period."""
+    if not start_date or not end_date:
+        start_date, end_date = default_date_range()
+    prev_start, prev_end = _previous_period(start_date, end_date)
+
+    current_rows = query_search_analytics(site_url, dimensions=["query"], start_date=start_date,
+                                           end_date=end_date, row_limit=1000)
+    previous_rows = query_search_analytics(site_url, dimensions=["query"], start_date=prev_start,
+                                            end_date=prev_end, row_limit=1000)
+
+    prev_map = {r["keys"][0]: r for r in previous_rows}
+
+    movers = []
+    for r in current_rows:
+        query = r["keys"][0]
+        prev = prev_map.get(query)
+        if not prev:
+            continue  # query didn't appear last period — not a fair comparison
+        if r.get("impressions", 0) < min_impressions and prev.get("impressions", 0) < min_impressions:
+            continue  # too little data to be meaningful
+
+        curr_pos = r.get("position", 0)
+        prev_pos = prev.get("position", 0)
+        movers.append({
+            "query": query,
+            "current_position": round(curr_pos, 1),
+            "previous_position": round(prev_pos, 1),
+            "position_change": round(curr_pos - prev_pos, 1),  # negative = improved
+            "current_clicks": r.get("clicks", 0),
+            "previous_clicks": prev.get("clicks", 0),
+        })
+
+    gainers = sorted([m for m in movers if m["position_change"] < 0],
+                      key=lambda m: m["position_change"])[:limit]
+    losers = sorted([m for m in movers if m["position_change"] > 0],
+                     key=lambda m: -m["position_change"])[:limit]
+
+    return {"gainers": gainers, "losers": losers}
+
+
+def get_tracked_keywords(site_url):
+    with get_session() as session:
+        record = session.get(GscTrackedKeyword, site_url)
+        return list(record.keywords) if record else []
+
+
+def set_tracked_keywords(site_url, keywords):
+    """Overwrite the tracked-keyword list for a site. Dedupes (case-insensitive),
+    strips whitespace, drops empties, preserves the order given."""
+    cleaned, seen = [], set()
+    for kw in keywords:
+        kw = (kw or "").strip()
+        if kw and kw.lower() not in seen:
+            cleaned.append(kw)
+            seen.add(kw.lower())
+    with get_session() as session:
+        record = session.get(GscTrackedKeyword, site_url)
+        if record is None:
+            record = GscTrackedKeyword(site_url=site_url, keywords=cleaned)
+        else:
+            record.keywords = cleaned
+        session.add(record)
+    return cleaned
+
+
+def get_keyword_position_history(site_url, keyword, start_date=None, end_date=None):
+    """Daily average position (+ clicks/impressions) for one exact-match keyword.
+    Powers the per-keyword trend chart in the Rank Tracker UI."""
+    if not start_date or not end_date:
+        start_date, end_date = default_date_range()
+    rows = query_search_analytics(
+        site_url, dimensions=["date"], start_date=start_date, end_date=end_date,
+        row_limit=1000,
+        filters=[{"dimension": "query", "operator": "equals", "expression": keyword}],
+    )
+    rows.sort(key=lambda r: r["keys"][0])
+    return [
+        {
+            "date": r["keys"][0],
+            "position": round(r.get("position", 0), 1),
+            "clicks": r.get("clicks", 0),
+            "impressions": r.get("impressions", 0),
+        }
+        for r in rows
+    ]
+
+
+def get_rank_tracker_summary(site_url, keywords, start_date=None, end_date=None):
+    """Current vs. previous-period position for a list of exact-match tracked
+    keywords — the classic rank-tracker table (keyword / position / change).
+    A keyword with zero impressions in a period comes back as position=None
+    ('not found' in the UI), matching how GSC actually behaves."""
+    if not start_date or not end_date:
+        start_date, end_date = default_date_range()
+    prev_start, prev_end = _previous_period(start_date, end_date)
+
+    results = []
+    for kw in keywords:
+        curr_rows = query_search_analytics(
+            site_url, dimensions=["query"], start_date=start_date, end_date=end_date,
+            row_limit=1, filters=[{"dimension": "query", "operator": "equals", "expression": kw}],
+        )
+        prev_rows = query_search_analytics(
+            site_url, dimensions=["query"], start_date=prev_start, end_date=prev_end,
+            row_limit=1, filters=[{"dimension": "query", "operator": "equals", "expression": kw}],
+        )
+        curr = curr_rows[0] if curr_rows else None
+        prev = prev_rows[0] if prev_rows else None
+
+        curr_pos = round(curr.get("position", 0), 1) if curr else None
+        prev_pos = round(prev.get("position", 0), 1) if prev else None
+
+        results.append({
+            "keyword": kw,
+            "position": curr_pos,
+            "previous_position": prev_pos,
+            # negative = improved (rank moved to a lower/better number) — same convention as get_movers
+            "change": round(curr_pos - prev_pos, 1) if (curr_pos is not None and prev_pos is not None) else None,
+            "clicks": curr.get("clicks", 0) if curr else 0,
+            "impressions": curr.get("impressions", 0) if curr else 0,
+        })
+    return results
+
+
+def get_sitemaps(site_url):
+    cache_key = GSC_CACHE_KEY_PREFIX + "sitemaps::" + site_url
+    entry = _gsc_cache_get(cache_key)
+    if entry:
+        return entry["rows"]
+
+    service = get_service(site_url)
+    result = service.sitemaps().list(siteUrl=site_url).execute()
+    sitemaps = []
+    for s in result.get("sitemap", []):
+        sitemaps.append({
+            "path": s.get("path"),
+            "last_submitted": s.get("lastSubmitted"),
+            "last_downloaded": s.get("lastDownloaded"),
+            "is_pending": s.get("isPending", False),
+            "errors": s.get("errors", 0),
+            "warnings": s.get("warnings", 0),
+            "contents": [
+                {"type": c.get("type"), "submitted": c.get("submitted"), "indexed": c.get("indexed")}
+                for c in s.get("contents", [])
+            ],
+        })
+
+    _gsc_cache_set(cache_key, sitemaps)
+    return sitemaps

@@ -263,6 +263,10 @@ def discover_property_map(known_site_urls):
                 else:
                     row.ga4_property_id = prop["property_id"]
                 session.add(row)
+                # Flush now so a second account matching the same site_url (see
+                # the identical fix + comment in gsc_client.list_all_sites_across_accounts)
+                # updates this row instead of colliding with it at commit time.
+                session.flush()
                 matched.append({"site_url": site_url, "property_id": prop["property_id"]})
 
     return {"matched": matched, "unmatched_properties": unmatched, "accounts_needing_login": needs_login}
