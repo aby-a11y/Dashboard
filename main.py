@@ -31,7 +31,6 @@ from fastapi.responses import StreamingResponse
 import admin_auth
 from db import get_session, init_db
 from models import SiteGA4Map, SiteGMBMap
-from domain_utils import extract_domain
 
 app = FastAPI(
     title="SEO Client Dashboard API",
@@ -113,26 +112,6 @@ def get_client_site(authorization: Optional[str] = Header(None)) -> str:
     return payload["site_url"]
 
 
-def _resolve_client_gmb_location(record):
-    """GMB location for a client: the client's own gmb_location_id if set,
-    otherwise fall back to the admin-managed site_gmb_map (matched by domain,
-    so https://www.x.com/ == x.com == sc-domain:x.com). The admin dashboard
-    reads site_gmb_map, so without this fallback a client whose record has no
-    gmb_location_id sees 'No GMB' even though the admin page shows data."""
-    if not record:
-        return None
-    if record.get("gmb_location_id"):
-        return record["gmb_location_id"]
-    want = extract_domain(record.get("site_url"))
-    if not want:
-        return None
-    with get_session() as session:
-        for row in session.query(SiteGMBMap).all():
-            if extract_domain(row.site_url) == want:
-                return row.gmb_location_id
-    return None
-
-
 def get_client_gmb_location(authorization: Optional[str] = Header(None)) -> str:
     """Auth dependency for every /api/client/gmb/* endpoint. Resolves the
     caller's gmb_location_id strictly from their stored client record (via
@@ -150,7 +129,11 @@ def get_client_gmb_location(authorization: Optional[str] = Header(None)) -> str:
     except pyjwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid session token")
     record = client_auth.get_client_record(payload["client_id"])
-    location_id = _resolve_client_gmb_location(record)
+    location_id = record.get("gmb_location_id") if record else None
+    if not location_id and record:
+        # Admin never sets gmb_location_id on the client record, so fall back
+        # to the admin's site -> GMB mapping (site_gmb_map).
+        location_id = _shared_gmb_location(record["site_url"])
     if not location_id:
         raise HTTPException(status_code=404, detail="No Google Business Profile linked for this client yet")
     return location_id
@@ -1155,6 +1138,82 @@ def api_shared_serper_rankings(ctx: dict = Depends(get_share_context)):
     return {"site_url": site_url, "rows": serper_client.get_cached_rankings(site_url)}
 
 
+# ---- Shared snapshot: Google Business Profile (read-only) ----
+#      The share token carries site_url + dates only, so the GMB location is
+#      resolved server-side from site_gmb_map. A visitor can never pass their
+#      own location_id.
+
+def _shared_gmb_location(site_url: str) -> Optional[str]:
+    with get_session() as session:
+        mapping = {r.site_url: str(r.gmb_location_id) for r in session.query(SiteGMBMap).all()}
+    if site_url in mapping:
+        return mapping[site_url]
+    clean = site_url.rstrip("/")
+    for k, v in mapping.items():
+        if k.rstrip("/") == clean:
+            return v
+    # Last resort: compare bare domains so "sc-domain:x.com", "https://www.x.com/"
+    # and "x.com" all match each other.
+    from domain_utils import extract_domain
+    want = extract_domain(site_url)
+    if want:
+        for k, v in mapping.items():
+            if extract_domain(k) == want:
+                return v
+    return None
+
+
+@app.get("/api/shared/gmb/summary")
+def api_shared_gmb_summary(ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    location_id = _shared_gmb_location(site_url)
+    if not location_id:
+        return {"site_url": site_url, "available": False}
+    data = _call(gmb_client.get_summary, location_id, s, e)
+    comparison = None
+    try:
+        comparison = _call(gmb_client.get_comparison, location_id, s, e)
+    except HTTPException:
+        pass
+    title = None
+    try:
+        title = _call(gmb_client.get_location_details, location_id).get("title")
+    except HTTPException:
+        pass
+    return {"site_url": site_url, "available": True, "title": title,
+            "start_date": s, "end_date": e, "comparison": comparison, **data}
+
+
+@app.get("/api/shared/gmb/trend")
+def api_shared_gmb_trend(ctx: dict = Depends(get_share_context)):
+    site_url, s, e = ctx["site_url"], ctx["start_date"], ctx["end_date"]
+    location_id = _shared_gmb_location(site_url)
+    if not location_id:
+        return {"site_url": site_url, "available": False, "rows": []}
+    rows = _call(gmb_client.get_trend, location_id, s, e)
+    return {"site_url": site_url, "available": True, "start_date": s, "end_date": e, "rows": rows}
+
+
+@app.get("/api/shared/gmb/keywords")
+def api_shared_gmb_keywords(months_back: int = Query(1, ge=1, le=18), ctx: dict = Depends(get_share_context)):
+    site_url = ctx["site_url"]
+    location_id = _shared_gmb_location(site_url)
+    if not location_id:
+        return {"site_url": site_url, "available": False, "rows": []}
+    rows = _call(gmb_client.get_search_keywords, location_id, months_back)
+    return {"site_url": site_url, "available": True, "rows": rows}
+
+
+@app.get("/api/shared/gmb/reviews")
+def api_shared_gmb_reviews(limit: int = Query(10, ge=1, le=50), ctx: dict = Depends(get_share_context)):
+    site_url = ctx["site_url"]
+    location_id = _shared_gmb_location(site_url)
+    if not location_id:
+        return {"site_url": site_url, "available": False, "reviews": []}
+    data = _call(gmb_client.get_reviews, location_id, limit)
+    return {"site_url": site_url, "available": True, **data}
+
+
 @app.get("/shared")
 def serve_shared_view():
     return FileResponse("static/shared.html")
@@ -1308,7 +1367,7 @@ def api_client_gmb_status(authorization: Optional[str] = Header(None)):
     except pyjwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid session token")
     record = client_auth.get_client_record(payload["client_id"])
-    has_gmb = bool(_resolve_client_gmb_location(record))
+    has_gmb = bool(record and (record.get("gmb_location_id") or _shared_gmb_location(record["site_url"])))
     return {"has_gmb": has_gmb, "message": None if has_gmb else "No GMB"}
 
 @app.get("/api/client/gmb/summary")
