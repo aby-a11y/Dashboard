@@ -352,6 +352,47 @@
     margin: 0 auto !important;
   }
 }
+
+  /* ---- Google Business Profile ---- */
+  .gmb-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; margin-bottom: 24px; }
+  .gmb-grid-3 > .chart-card, .gmb-grid-2 > .chart-card { margin-bottom: 0; min-width: 0; }
+  .gmb-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+  @media (max-width: 900px) { .gmb-grid-3, .gmb-grid-2 { grid-template-columns: 1fr; } }
+  .gmb-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .gmb-tot { font-size: 14px; }
+  .gmb-donut { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .gmb-donut-chart { position: relative; width: 130px; height: 130px; flex: 0 0 auto; }
+  .gmb-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; text-align: center; }
+  .gmb-donut-center b { font-size: 20px; }
+  .gmb-donut-center span { font-size: 10px; color: var(--muted); }
+  .gmb-donut-legend { flex: 1; min-width: 110px; font-size: 12px; }
+  .gmb-lg { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .gmb-lg .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+  .gmb-lg .nm { flex: 1; color: var(--muted); }
+  .gmb-review { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .gmb-review:last-child { border-bottom: 0; }
+  .gmb-review .hd { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .gmb-review .stars { color: #f6b94f; letter-spacing: 1px; }
+  .gmb-review .dt { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .gmb-review p { margin: 6px 0 0; }
+  .gmb-review .reply { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--border); color: var(--muted); }
+  .gmb-delta { font-size: 11px; margin-top: 4px; }
+  #gmbKeywordMonths { width: 130px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  @media (max-width: 640px) {
+    .gmb-grid-3, .gmb-grid-2 { gap: 3px; margin-bottom: 5px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .gmb-grid-2 { grid-template-columns: 1fr 1fr; }
+    .gmb-donut { gap: 4px; }
+    .gmb-donut-chart { width: 48px; height: 48px; }
+    .gmb-donut-center b { font-size: 8px; }
+    .gmb-donut-center span { display: none; }
+    .gmb-donut-legend { font-size: 6px; min-width: 0; }
+    .gmb-lg { padding: 0; gap: 3px; }
+    .gmb-lg .dot { width: 5px; height: 5px; }
+    .gmb-tot { font-size: 7px; }
+    .gmb-review { padding: 3px 0; font-size: 6px; }
+    .gmb-delta { font-size: 6px; margin-top: 1px; }
+    #gmbKeywordMonths { width: 70px; font-size: 6px; padding: 1px 2px; }
+  }
 </style>
 </head>
 <body>
@@ -440,6 +481,60 @@
     <div class="chart-card" id="serperRankCard" style="display:none;">
       <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span></div>
       <div id="serperRankTable" class="loading">Loading…</div>
+    </div>
+
+    <!-- Google Business Profile (hidden until the API says this site has a mapped GMB location) -->
+    <div id="gmbSection" class="pdf-page-break" style="display:none;">
+      <h2 class="section-heading">Google Business Profile</h2>
+      <div class="summary-grid" id="gmbSummaryGrid"><div class="loading">Loading…</div></div>
+
+      <div class="chart-card">
+        <div class="section-title">GMB Performance Trend <span id="gmbBizName" style="color:var(--muted); font-weight:400;"></span></div>
+        <div class="trend-wrap"><canvas id="gmbTrendChart"></canvas></div>
+      </div>
+
+      <div class="chart-card">
+        <div class="section-title gmb-row">
+          <span>Search Keywords</span>
+          <select id="gmbKeywordMonths" onchange="loadGmbKeywords()">
+            <option value="1" selected>Last month</option>
+            <option value="2">2 months back</option>
+            <option value="3">3 months back</option>
+            <option value="6">6 months back</option>
+            <option value="12">12 months back</option>
+            <option value="18">18 months back</option>
+          </select>
+        </div>
+        <div id="gmbKeywordsTable" class="loading">Loading…</div>
+      </div>
+
+      <div id="gmbExtras">
+        <div class="gmb-grid-3">
+          <div class="chart-card"><div class="section-title">Platform &amp; device</div>
+            <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="gmbDonutPlatform"></canvas><div class="gmb-donut-center" id="gmbDonutPlatformTotal"></div></div><div class="gmb-donut-legend" id="gmbDonutPlatformLegend"></div></div></div>
+          <div class="chart-card"><div class="section-title">Desktop vs Mobile</div>
+            <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="gmbDonutDevice"></canvas><div class="gmb-donut-center" id="gmbDonutDeviceTotal"></div></div><div class="gmb-donut-legend" id="gmbDonutDeviceLegend"></div></div></div>
+          <div class="chart-card"><div class="section-title">Search vs Maps</div>
+            <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="gmbDonutSurface"></canvas><div class="gmb-donut-center" id="gmbDonutSurfaceTotal"></div></div><div class="gmb-donut-legend" id="gmbDonutSurfaceLegend"></div></div></div>
+        </div>
+
+        <div class="gmb-grid-2">
+          <div class="chart-card"><div class="section-title gmb-row"><span>Business Profile Impressions</span><b class="gmb-tot" id="gmbImpBarTotal">0</b></div><div class="trend-wrap"><canvas id="gmbImpBar"></canvas></div></div>
+          <div class="chart-card"><div class="section-title gmb-row"><span>Business Profile Interactions</span><b class="gmb-tot" id="gmbIntBarTotal">0</b></div><div class="trend-wrap"><canvas id="gmbIntBar"></canvas></div></div>
+        </div>
+
+        <div class="gmb-grid-3">
+          <div class="chart-card"><div class="section-title gmb-row"><span>Calls</span><b class="gmb-tot" id="gmbMiniCallsTotal">0</b></div><div class="trend-wrap" style="height:120px;"><canvas id="gmbMiniCalls"></canvas></div><div class="empty" id="gmbMiniCallsEmpty" style="display:none;">No Calls found for this date range</div></div>
+          <div class="chart-card"><div class="section-title gmb-row"><span>Directions</span><b class="gmb-tot" id="gmbMiniDirTotal">0</b></div><div class="trend-wrap" style="height:120px;"><canvas id="gmbMiniDir"></canvas></div><div class="empty" id="gmbMiniDirEmpty" style="display:none;">No Direction Requests found for this date range</div></div>
+          <div class="chart-card"><div class="section-title gmb-row"><span>Website Clicks</span><b class="gmb-tot" id="gmbMiniWebTotal">0</b></div><div class="trend-wrap" style="height:120px;"><canvas id="gmbMiniWeb"></canvas></div><div class="empty" id="gmbMiniWebEmpty" style="display:none;">No Website Clicks found for this date range</div></div>
+        </div>
+      </div>
+
+      <div class="summary-grid" style="grid-template-columns:1fr 1fr;">
+        <div class="stat-card"><div class="label">Average Rating</div><div class="value" id="gmbRatingValue">—</div></div>
+        <div class="stat-card"><div class="label">Reviews</div><div class="value" id="gmbReviewCount">—</div></div>
+      </div>
+      <div class="chart-card"><div class="section-title">Latest Reviews</div><div id="gmbReviewList" class="loading">Loading reviews…</div></div>
     </div>
   </main>
 
@@ -835,6 +930,153 @@ async function loadGa4() {
   } catch (e) { document.getElementById("ga4PagesTable").innerHTML = `<div class="error">${e.message}</div>`; }
 }
 
+/* ---- Google Business Profile (read-only, same widgets as the admin dashboard) ---- */
+let gmbTrendChart;
+const gmbXCharts = {}, gmbXDonuts = {};
+const GMB_METRICS = ["total_impressions", "website_clicks", "call_clicks", "total_clicks", "direction_requests"];
+const GMB_LABELS = { total_impressions: "Impressions", website_clicks: "Website clicks", call_clicks: "Call clicks", total_clicks: "Total clicks", direction_requests: "Direction requests" };
+const gmbImpKeys = ["business_impressions_mobile_search", "business_impressions_desktop_search", "business_impressions_desktop_maps", "business_impressions_mobile_maps"];
+
+function gmbEsc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+const gmbPct = v => (v == null || Number.isNaN(Number(v))) ? "—" : `${Number(v) > 0 ? "+" : ""}${Number(v).toFixed(1)}%`;
+function gmbXSum(rows, keys) { return rows.reduce((t, r) => t + keys.reduce((a, k) => a + Number(r[k] || 0), 0), 0); }
+
+function gmbXDonut(id, items) {
+  const total = items.reduce((a, i) => a + i.value, 0);
+  if (gmbXDonuts[id]) { gmbXDonuts[id].destroy(); delete gmbXDonuts[id]; }
+  document.getElementById(id + "Total").innerHTML = `<b>${num(total)}</b><span>Impressions</span>`;
+  document.getElementById(id + "Legend").innerHTML = items.map(i => `<div class="gmb-lg"><span class="dot" style="background:${i.color}"></span><span class="nm">${gmbEsc(i.label)}</span><b>${num(i.value)}</b></div>`).join("");
+  if (!total) return;
+  gmbXDonuts[id] = new Chart(document.getElementById(id), {
+    type: "doughnut",
+    data: { labels: items.map(i => i.label), datasets: [{ data: items.map(i => i.value), backgroundColor: items.map(i => i.color), borderWidth: 0 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: "70%", plugins: { legend: { display: false } } }
+  });
+}
+function gmbXBar(id, rows, keys, color) {
+  if (gmbXCharts[id]) gmbXCharts[id].destroy();
+  const c = chartColors();
+  const data = rows.map(r => keys.reduce((a, k) => a + Number(r[k] || 0), 0));
+  document.getElementById(id + "Total").textContent = num(data.reduce((a, b) => a + b, 0));
+  gmbXCharts[id] = new Chart(document.getElementById(id), {
+    type: "bar",
+    data: { labels: rows.map(r => r.date), datasets: [{ data, backgroundColor: color, borderRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { color: c.muted, maxTicksLimit: 6 }, grid: { color: c.border } }, y: { beginAtZero: true, ticks: { color: c.muted, precision: 0 }, grid: { color: c.border } } }, plugins: { legend: { display: false } } }
+  });
+}
+function gmbXMini(id, rows, key, color) {
+  if (gmbXCharts[id]) { gmbXCharts[id].destroy(); delete gmbXCharts[id]; }
+  const c = chartColors();
+  const data = rows.map(r => Number(r[key] || 0));
+  const total = data.reduce((a, b) => a + b, 0);
+  const cv = document.getElementById(id), em = document.getElementById(id + "Empty");
+  document.getElementById(id + "Total").textContent = num(total);
+  if (!total) { cv.parentElement.style.display = "none"; em.style.display = "block"; return; }
+  cv.parentElement.style.display = ""; em.style.display = "none";
+  gmbXCharts[id] = new Chart(cv, {
+    type: "line",
+    data: { labels: rows.map(r => r.date), datasets: [{ data, borderColor: color, backgroundColor: color, tension: .35, pointRadius: 0, borderWidth: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { color: c.muted, maxTicksLimit: 5 }, grid: { display: false } }, y: { beginAtZero: true, ticks: { color: c.muted, precision: 0 }, grid: { color: c.border } } }, plugins: { legend: { display: false } } }
+  });
+}
+function gmbXRender(rows) {
+  const s = keys => gmbXSum(rows, keys);
+  gmbXDonut("gmbDonutPlatform", [
+    { label: "Mobile Search", value: s(["business_impressions_mobile_search"]), color: "#f6b94f" },
+    { label: "Desktop Search", value: s(["business_impressions_desktop_search"]), color: "#a7d055" },
+    { label: "Desktop Maps", value: s(["business_impressions_desktop_maps"]), color: "#7ac7f5" },
+    { label: "Mobile Maps", value: s(["business_impressions_mobile_maps"]), color: "#e58fc0" }
+  ]);
+  gmbXDonut("gmbDonutDevice", [
+    { label: "Mobile", value: s(["business_impressions_mobile_search", "business_impressions_mobile_maps"]), color: "#5ab8e6" },
+    { label: "Desktop", value: s(["business_impressions_desktop_search", "business_impressions_desktop_maps"]), color: "#a7d055" }
+  ]);
+  gmbXDonut("gmbDonutSurface", [
+    { label: "Search", value: s(["business_impressions_mobile_search", "business_impressions_desktop_search"]), color: "#5ab8e6" },
+    { label: "Maps", value: s(["business_impressions_mobile_maps", "business_impressions_desktop_maps"]), color: "#a7d055" }
+  ]);
+  gmbXBar("gmbImpBar", rows, gmbImpKeys, "#7ab4ee");
+  gmbXBar("gmbIntBar", rows, ["website_clicks", "call_clicks", "business_direction_requests"], "#7ab4ee");
+  gmbXMini("gmbMiniCalls", rows, "call_clicks", "#1a73e8");
+  gmbXMini("gmbMiniDir", rows, "business_direction_requests", "#1a73e8");
+  gmbXMini("gmbMiniWeb", rows, "website_clicks", "#1a73e8");
+}
+
+async function loadGmbSummary() {
+  const d = await fetchShared("gmb/summary");
+  if (!d.available) return false;
+  document.getElementById("gmbSection").style.display = "";
+  if (d.title) document.getElementById("gmbBizName").textContent = `· ${d.title}`;
+  const changes = {};
+  if (d.comparison?.current && d.comparison?.previous) GMB_METRICS.forEach(k => {
+    const a = Number(d.comparison.current[k] || 0), b = Number(d.comparison.previous[k] || 0);
+    changes[k] = b ? ((a - b) / Math.abs(b)) * 100 : (a ? 100 : 0);
+  });
+  document.getElementById("gmbSummaryGrid").innerHTML = GMB_METRICS.map(k => `
+    <div class="stat-card">
+      <div class="label">${GMB_LABELS[k]}</div>
+      <div class="value">${num(d[k] ?? 0)}</div>
+      ${changes[k] !== undefined ? `<div class="gmb-delta" style="color:${changes[k] >= 0 ? 'var(--accent2)' : '#ff6b6b'};">${gmbPct(changes[k])} vs previous</div>` : ""}
+    </div>`).join("");
+  return true;
+}
+async function loadGmbTrend() {
+  const d = await fetchShared("gmb/trend");
+  const rows = d.rows || [];
+  const c = chartColors();
+  const metrics = [
+    ["Impressions", r => gmbImpKeys.reduce((a, k) => a + Number(r[k] || 0), 0)],
+    ["Website clicks", r => Number(r.website_clicks || 0)],
+    ["Calls", r => Number(r.call_clicks || 0)],
+    ["Directions", r => Number(r.business_direction_requests || 0)]
+  ];
+  if (gmbTrendChart) gmbTrendChart.destroy();
+  gmbTrendChart = new Chart(document.getElementById("gmbTrendChart"), {
+    type: "line",
+    data: { labels: rows.map(r => r.date), datasets: metrics.map(([label, fn]) => ({ label, data: rows.map(fn), tension: .25 })) },
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, scales: { x: { ticks: { color: c.muted }, grid: { color: c.border } }, y: { beginAtZero: true, ticks: { color: c.muted }, grid: { color: c.border } } }, plugins: { legend: { labels: { color: c.text } } } }
+  });
+  gmbXRender(rows);
+}
+async function loadGmbKeywords() {
+  const el = document.getElementById("gmbKeywordsTable");
+  try {
+    const months = document.getElementById("gmbKeywordMonths").value;
+    const d = await fetchShared(`gmb/keywords?months_back=${encodeURIComponent(months)}`);
+    const rows = d.rows || [];
+    if (!rows.length) { el.innerHTML = '<div class="empty">No search keyword data for this month.</div>'; return; }
+    el.innerHTML = `<div class="table-scroll"><table><thead><tr><th>Search keyword</th><th class="num">Impressions</th></tr></thead><tbody>${rows.slice(0, 50).map(r => `<tr><td>${gmbEsc(r.keyword || "—")}</td><td class="num">${r.below_threshold ? "&lt; " : ""}${num(r.impressions)}</td></tr>`).join("")}</tbody></table></div>`;
+  } catch (e) { el.innerHTML = `<div class="error">${gmbEsc(e.message)}</div>`; }
+}
+async function loadGmbReviews() {
+  const val = document.getElementById("gmbRatingValue"), cnt = document.getElementById("gmbReviewCount"), list = document.getElementById("gmbReviewList");
+  try {
+    const d = await fetchShared("gmb/reviews?limit=10");
+    val.textContent = d.average_rating ? `${Number(d.average_rating).toFixed(1)} ★` : "—";
+    cnt.textContent = num(d.total_reviews);
+    const stars = n => "★".repeat(n) + "☆".repeat(5 - n);
+    const rows = d.reviews || [];
+    list.className = "";
+    list.innerHTML = rows.length ? rows.map(r => `<div class="gmb-review"><div class="hd"><b>${gmbEsc(r.reviewer)}</b><span class="stars">${stars(r.rating)}</span><span class="dt">${gmbEsc((r.updated || r.created || "").slice(0, 10))}</span></div>${r.comment ? `<p>${gmbEsc(r.comment)}</p>` : ""}${r.reply ? `<div class="reply"><b>Owner reply:</b> ${gmbEsc(r.reply)}</div>` : ""}</div>`).join("") : '<div class="empty">No reviews yet.</div>';
+  } catch (e) {
+    val.textContent = "—"; cnt.textContent = "—";
+    list.className = "error"; list.textContent = `Reviews unavailable: ${e.message}`;
+  }
+}
+async function loadGmb() {
+  try {
+    const has = await loadGmbSummary();
+    if (!has) return; // no GMB mapped for this site — section stays hidden
+    await Promise.allSettled([loadGmbTrend(), loadGmbKeywords(), loadGmbReviews()]);
+  } catch (e) {
+    // GMB failing must never break the rest of the report
+    console.warn("GMB section unavailable:", e.message);
+  }
+  scheduleMobileFit();
+}
+
 async function downloadPdf() {
   const btn = document.getElementById("pdfBtn");
   const themeBtn = document.getElementById("themeToggleBtn");
@@ -886,6 +1128,13 @@ function applyChartColors() {
   [deviceChart, ga4TrafficChart].forEach(chart => {
     if (!chart) return;
     chart.options.plugins.legend = donutLegend();
+    chart.update();
+  });
+  [gmbTrendChart, ...Object.values(gmbXCharts)].forEach(chart => {
+    if (!chart) return;
+    if (chart.options.scales.y) { chart.options.scales.y.ticks.color = c.muted; if (chart.options.scales.y.grid) chart.options.scales.y.grid.color = c.border; }
+    if (chart.options.scales.x) { chart.options.scales.x.ticks.color = c.muted; if (chart.options.scales.x.grid) chart.options.scales.x.grid.color = c.border; }
+    if (chart.options.plugins.legend?.labels) chart.options.plugins.legend.labels.color = c.text;
     chart.update();
   });
 }
@@ -954,6 +1203,7 @@ async function loadAll() {
   loadRankTracker();
   loadSerperRankings();
   loadGa4();
+  loadGmb();
 
   // These delays cover the API responses and Chart.js rendering.
   [300, 800, 1500, 2500, 4000].forEach(ms => {

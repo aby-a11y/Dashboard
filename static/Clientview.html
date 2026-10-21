@@ -1085,23 +1085,36 @@ function clientGmbPreviousRange(){
   const iso=d=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return `${y}-${m}-${day}`;};
   return {start:iso(ps),end:iso(pe)};
 }
-async function loadClientGmbLocation(){
-  const status=document.getElementById("clientGmbProfileStatus");
-  try{
-    const d=await fetchJSON(`${API}/api/client/gmb/location`);
-    status.className="loading";
-    status.textContent=d.title||"Business Profile";
-  }catch(e){
-    status.className="error"; status.textContent=e.message;
+
+  async function loadClientGmbLocation() {
+    const status = document.getElementById("clientGmbProfileStatus");
+
+    try {
+      const d = await fetchJSON(
+        `${API}/api/client/gmb/location?location_id=${encodeURIComponent(clientGmbLocationId)}`
+      );
+
+      status.className = "loading";
+      status.textContent = d.title || "Business Profile";
+    } catch (e) {
+      status.className = "error";
+      status.textContent = e.message;
+    }
   }
-}
+
 async function loadClientGmbSummary(){
   const el=document.getElementById("clientGmbSummaryGrid");
   try{
-    const current=await fetchJSON(`${API}/api/client/gmb/summary?${clientGmbDateParams().replace(/^&/,"")}`);
+    const current = await fetchJSON(
+      `${API}/api/client/gmb/summary?location_id=${encodeURIComponent(clientGmbLocationId)}&${clientGmbDateParams().replace(/^&/, "")}`
+    );
     const prevRange=clientGmbPreviousRange();
     let previous=null;
-    if(prevRange) previous=await fetchJSON(`${API}/api/client/gmb/summary?${clientGmbDateParams(prevRange.start,prevRange.end).replace(/^&/,"")}`).catch(()=>null);
+    if (prevRange) {
+      previous = await fetchJSON(
+        `${API}/api/client/gmb/summary?location_id=${encodeURIComponent(clientGmbLocationId)}&${clientGmbDateParams(prevRange.start, prevRange.end).replace(/^&/, "")}`
+      ).catch(() => null);
+    }
     const changes={};
     if(previous) CLIENT_GMB_METRICS.forEach(k=>{
       const a=Number(current[k]||0),b=Number(previous[k]||0); changes[k]=b?((a-b)/Math.abs(b))*100:(a?100:0);
@@ -1114,7 +1127,7 @@ async function loadClientGmbSummary(){
 }
 async function loadClientGmbTrend(){
   try{
-    const d=await fetchJSON(`${API}/api/client/gmb/trend?${clientGmbDateParams().replace(/^&/,"")}`);
+    const d=await fetchJSON(`${API}/api/client/gmb/trend?location_id=${encodeURIComponent(clientGmbLocationId)}&${clientGmbDateParams().replace(/^&/, "")}`);
     const labels=d.rows.map(r=>r.date);
     const metrics=[
       ["Impressions",r=>Number(r.business_impressions_desktop_maps||0)+Number(r.business_impressions_desktop_search||0)+Number(r.business_impressions_mobile_maps||0)+Number(r.business_impressions_mobile_search||0)],
@@ -1203,7 +1216,7 @@ async function loadClientGmbTrend(){
     async function clientGmbLoadReviews() {
       const val = document.getElementById("clientGmbRatingValue"), cnt = document.getElementById("clientGmbReviewCount"), list = document.getElementById("clientGmbReviewList");
       try {
-        const url = `${API}/api/client/gmb/reviews?limit=10`;
+        const url = `${API}/api/client/gmb/reviews?location_id=${encodeURIComponent(clientGmbLocationId)}&limit=10`;
         const d = await fetchJSON(url);
         val.textContent = d.average_rating ? `${Number(d.average_rating).toFixed(1)} ★` : "—";
         cnt.textContent = clientGmbNum(d.total_reviews);
@@ -1221,7 +1234,7 @@ async function loadClientGmbKeywords(){
   const el=document.getElementById("clientGmbKeywords");
   try{
     const months=document.getElementById("clientGmbKeywordMonths").value;
-    const d=await fetchJSON(`${API}/api/client/gmb/keywords?months_back=${months}`);
+    const d = await fetchJSON(`${API}/api/client/gmb/keywords?location_id=${encodeURIComponent(clientGmbLocationId)}&months_back=${months}`);
     const rows=d.rows||[];
     el.innerHTML=rows.length?`<table><thead><tr><th>Search keyword</th><th class="num">Impressions</th></tr></thead><tbody>${rows.slice(0,50).map(r=>`<tr><td>${clientGmbEsc(r.keyword||"—")}</td><td class="num">${r.below_threshold?"&lt; ":""}${clientGmbNum(r.impressions)}</td></tr>`).join("")}</tbody></table>`:'<div class="loading">No search keyword data for this month.</div>';
   }catch(e){el.innerHTML=`<div class="error">${clientGmbEsc(e.message)}</div>`;}

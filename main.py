@@ -31,6 +31,7 @@ from fastapi.responses import StreamingResponse
 import admin_auth
 from db import get_session, init_db
 from models import SiteGA4Map, SiteGMBMap
+from domain_utils import extract_domain
 
 app = FastAPI(
     title="SEO Client Dashboard API",
@@ -112,6 +113,26 @@ def get_client_site(authorization: Optional[str] = Header(None)) -> str:
     return payload["site_url"]
 
 
+def _resolve_client_gmb_location(record):
+    """GMB location for a client: the client's own gmb_location_id if set,
+    otherwise fall back to the admin-managed site_gmb_map (matched by domain,
+    so https://www.x.com/ == x.com == sc-domain:x.com). The admin dashboard
+    reads site_gmb_map, so without this fallback a client whose record has no
+    gmb_location_id sees 'No GMB' even though the admin page shows data."""
+    if not record:
+        return None
+    if record.get("gmb_location_id"):
+        return record["gmb_location_id"]
+    want = extract_domain(record.get("site_url"))
+    if not want:
+        return None
+    with get_session() as session:
+        for row in session.query(SiteGMBMap).all():
+            if extract_domain(row.site_url) == want:
+                return row.gmb_location_id
+    return None
+
+
 def get_client_gmb_location(authorization: Optional[str] = Header(None)) -> str:
     """Auth dependency for every /api/client/gmb/* endpoint. Resolves the
     caller's gmb_location_id strictly from their stored client record (via
@@ -129,7 +150,7 @@ def get_client_gmb_location(authorization: Optional[str] = Header(None)) -> str:
     except pyjwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid session token")
     record = client_auth.get_client_record(payload["client_id"])
-    location_id = record.get("gmb_location_id") if record else None
+    location_id = _resolve_client_gmb_location(record)
     if not location_id:
         raise HTTPException(status_code=404, detail="No Google Business Profile linked for this client yet")
     return location_id
@@ -1287,7 +1308,7 @@ def api_client_gmb_status(authorization: Optional[str] = Header(None)):
     except pyjwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid session token")
     record = client_auth.get_client_record(payload["client_id"])
-    has_gmb = bool(record and record.get("gmb_location_id"))
+    has_gmb = bool(_resolve_client_gmb_location(record))
     return {"has_gmb": has_gmb, "message": None if has_gmb else "No GMB"}
 
 @app.get("/api/client/gmb/summary")
