@@ -30,3 +30,5 @@ appendonly.aof
 # Redis local data directory
 redis-data/
 redis_data/
+
+dump.pgc

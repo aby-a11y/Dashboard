@@ -1224,6 +1224,12 @@ def api_gmb_keywords(location_id: str, months_back: int = Query(1, ge=1, le=18),
     return {"location_id": location_id, "rows": rows}
 
 
+@app.get("/api/gmb/reviews")
+def api_gmb_reviews(location_id: str, limit: int = Query(10, ge=1, le=50),
+                    _admin: str = Depends(get_current_admin)):
+    return _call(gmb_client.get_reviews, location_id, limit)
+
+
 # ---- 5) Admin: portfolio view — every client's GMB summary in one call ----
 #         (uses site_gmb_map.json so you don't need account-listing access at all)
 
@@ -1267,6 +1273,23 @@ def api_gmb_search_categories(query: str, region_code: str = "IN", _admin: str =
 #         get_client_gmb_location — a client can no longer request another
 #         client's GMB data by editing the query string.
 
+@app.get("/api/client/gmb/status")
+def api_client_gmb_status(authorization: Optional[str] = Header(None)):
+    """Tells Clientview whether this client has a GMB location linked, so the
+    page can show a clean "No GMB" state instead of a 404 error."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        payload = client_auth.decode_token(token)
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired, please log in again")
+    except pyjwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+    record = client_auth.get_client_record(payload["client_id"])
+    has_gmb = bool(record and record.get("gmb_location_id"))
+    return {"has_gmb": has_gmb, "message": None if has_gmb else "No GMB"}
+
 @app.get("/api/client/gmb/summary")
 def api_client_gmb_summary(start_date: Optional[str] = None, end_date: Optional[str] = None,
                             site_url: str = Depends(get_client_site),
@@ -1289,6 +1312,12 @@ def api_client_gmb_keywords(months_back: int = Query(1, ge=1, le=18),
                              location_id: str = Depends(get_client_gmb_location)):
     rows = _call(gmb_client.get_search_keywords, location_id, months_back)
     return {"site_url": site_url, "location_id": location_id, "rows": rows}
+
+@app.get("/api/client/gmb/reviews")
+def api_client_gmb_reviews(limit: int = Query(10, ge=1, le=50),
+                           site_url: str = Depends(get_client_site),
+                           location_id: str = Depends(get_client_gmb_location)):
+    return _call(gmb_client.get_reviews, location_id, limit)
 
 @app.get("/api/client/gmb/location")
 def api_client_gmb_location(site_url: str = Depends(get_client_site),

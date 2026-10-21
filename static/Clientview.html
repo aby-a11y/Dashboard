@@ -81,6 +81,29 @@
     padding: 18px;
     margin-bottom: 24px;
   }
+  .gmb-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .gmb-grid-3 { grid-template-columns: 1fr; } }
+  .gmb-grid-3 + .grid-2, .grid-2 + .gmb-grid-3 { margin-top: 0; }
+  .gmb-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .gmb-tot { font-size: 14px; }
+  .gmb-donut { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .gmb-donut-chart { position: relative; width: 150px; height: 150px; flex: 0 0 auto; }
+  .gmb-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; text-align: center; }
+  .gmb-donut-center b { font-size: 22px; }
+  .gmb-donut-center span { font-size: 11px; color: var(--muted); }
+  .gmb-donut-legend { flex: 1; min-width: 120px; font-size: 13px; }
+  .gmb-lg { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .gmb-lg .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+  .gmb-lg .nm { flex: 1; color: var(--muted); }
+  .gmb-review { padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .gmb-review:last-child { border-bottom: 0; }
+  .gmb-review .hd { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .gmb-review .stars { color: #f6b94f; letter-spacing: 1px; }
+  .gmb-review .dt { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .gmb-review p { margin: 6px 0 0; }
+  .gmb-review .reply { margin-top: 6px; padding: 8px 10px; border-left: 3px solid var(--border); color: var(--muted); }
+
+  .grid-2 > .stat-card { margin-bottom: 24px; }
   .grid-2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -185,21 +208,25 @@
   
 
 
+  <div class="chart-card" id="rankHistoryCard" style="display:none;">
+    <div class="section-title" id="rankHistoryTitle">Position History</div>
+    <canvas id="rankHistoryChart" height="80"></canvas>
+  </div>
+
+  <div class="chart-card">
+    <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span></div>
+    <div id="serperRankTable" class="loading">Loading...</div>
+  </div>
+
   <!-- Google Business Profile -->
   <h2 style="font-size:15px; color:var(--muted); margin:30px 0 10px; text-transform:uppercase; letter-spacing:0.05em;">Google Business Profile</h2>
 
-  <div class="chart-card">
+  <div class="chart-card" id="clientGmbProfileCard">
     <div class="section-title">Business Profile</div>
-    <div id="clientGmbProfileStatus" class="loading">Loading GMB profile...</div>
-    <div id="clientGmbProfile" style="display:none;margin-top:14px;">
-      <div class="summary-grid" id="clientGmbProfileGrid"></div>
-      <div class="grid-2">
-        <div id="clientGmbDetails"></div>
-        <div id="clientGmbHours"></div>
-      </div>
-    </div>
+    <div id="clientGmbProfileStatus" class="loading">Loading GMB...</div>
   </div>
 
+  <div id="clientGmbContent">
   <div class="summary-grid" id="clientGmbSummaryGrid">
     <div class="loading">Loading GMB summary...</div>
   </div>
@@ -230,15 +257,41 @@
     </div>
   </div>
 
-  <div class="chart-card" id="rankHistoryCard" style="display:none;">
-    <div class="section-title" id="rankHistoryTitle">Position History</div>
-    <canvas id="rankHistoryChart" height="80"></canvas>
+  <div class="chart-card">
+    <div class="section-title">Clicks <span style="color:var(--muted); font-weight:400;">(website + call, per day)</span></div>
+    <canvas id="clientGmbClicksChart" height="70"></canvas>
   </div>
 
-  <div class="chart-card">
-    <div class="section-title">🔍 True Rank <span style="color:var(--muted); font-weight:400;">(live Google position)</span></div>
-    <div id="serperRankTable" class="loading">Loading...</div>
+  <div id="clientGmbExtras">
+    <div class="gmb-grid-3">
+      <div class="chart-card"><div class="section-title">Impressions by platform &amp; device</div>
+        <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="clientGmbDonutPlatform"></canvas><div class="gmb-donut-center" id="clientGmbDonutPlatformTotal"></div></div><div class="gmb-donut-legend" id="clientGmbDonutPlatformLegend"></div></div></div>
+      <div class="chart-card"><div class="section-title">Impressions by device</div>
+        <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="clientGmbDonutDevice"></canvas><div class="gmb-donut-center" id="clientGmbDonutDeviceTotal"></div></div><div class="gmb-donut-legend" id="clientGmbDonutDeviceLegend"></div></div></div>
+      <div class="chart-card"><div class="section-title">Impressions by surface</div>
+        <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="clientGmbDonutSurface"></canvas><div class="gmb-donut-center" id="clientGmbDonutSurfaceTotal"></div></div><div class="gmb-donut-legend" id="clientGmbDonutSurfaceLegend"></div></div></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="chart-card"><div class="section-title gmb-row"><span>Business Profile Impressions</span><b class="gmb-tot" id="clientGmbImpBarTotal">0</b></div><canvas id="clientGmbImpBar" height="130"></canvas></div>
+      <div class="chart-card"><div class="section-title gmb-row"><span>Business Profile Interactions</span><b class="gmb-tot" id="clientGmbIntBarTotal">0</b></div><canvas id="clientGmbIntBar" height="130"></canvas></div>
+    </div>
+
+    <div class="gmb-grid-3">
+      <div class="chart-card"><div class="section-title gmb-row"><span>Calls</span><b class="gmb-tot" id="clientGmbMiniCallsTotal">0</b></div><canvas id="clientGmbMiniCalls" height="120"></canvas><div class="loading" id="clientGmbMiniCallsEmpty" style="display:none;">No Calls found for your date range</div></div>
+      <div class="chart-card"><div class="section-title gmb-row"><span>Directions</span><b class="gmb-tot" id="clientGmbMiniDirTotal">0</b></div><canvas id="clientGmbMiniDir" height="120"></canvas><div class="loading" id="clientGmbMiniDirEmpty" style="display:none;">No Direction Requests found for your date range</div></div>
+      <div class="chart-card"><div class="section-title gmb-row"><span>Website Clicks</span><b class="gmb-tot" id="clientGmbMiniWebTotal">0</b></div><canvas id="clientGmbMiniWeb" height="120"></canvas><div class="loading" id="clientGmbMiniWebEmpty" style="display:none;">No Website Clicks found for your date range</div></div>
+    </div>
   </div>
+  <div class="chart-card" id="clientGmbExtrasEmpty" style="display:none;"><div class="loading">No GMB</div></div>
+
+  <div class="grid-2">
+    <div class="stat-card"><div class="label">Average Rating</div><div class="value" id="clientGmbRatingValue">—</div></div>
+    <div class="stat-card"><div class="label">Reviews</div><div class="value" id="clientGmbReviewCount">—</div></div>
+  </div>
+  <div class="chart-card"><div class="section-title">Latest Reviews</div><div id="clientGmbReviewList" class="loading">Loading reviews...</div></div>
+  </div>
+
 </main>
 
 <script>
@@ -1005,19 +1058,20 @@ async function loadGa4Pages() {
 
 
 // ---------------- Google Business Profile (client read-only) ----------------
-let clientGmbTrendChart;
+let clientGmbTrendChart, clientGmbClicksChart;
 
 function clientGmbEsc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 }
 function clientGmbNum(v){return Number(v||0).toLocaleString();}
-function clientGmbLabel(k){return ({total_impressions:"Impressions",website_clicks:"Website clicks",call_clicks:"Call clicks",direction_requests:"Direction requests",conversations:"Conversations",bookings:"Bookings",food_orders:"Food orders",food_menu_clicks:"Menu clicks"})[k]||k;}
+const CLIENT_GMB_METRICS=["total_impressions","website_clicks","call_clicks","total_clicks","direction_requests"];
+function clientGmbLabel(k){return ({total_impressions:"Impressions",website_clicks:"Website clicks",call_clicks:"Call clicks",total_clicks:"Total clicks",direction_requests:"Direction requests"})[k]||k;}
 function clientGmbDateParams(start=null,end=null){
   const s=start||document.getElementById("startDate").value, e=end||document.getElementById("endDate").value;
   return s&&e?`&start_date=${encodeURIComponent(s)}&end_date=${encodeURIComponent(e)}`:"";
 }
 function clientGmbStats(d, changes={}){
-  return ["total_impressions","website_clicks","call_clicks","direction_requests","conversations","bookings","food_orders","food_menu_clicks"].map(k=>`
+  return CLIENT_GMB_METRICS.map(k=>`
     <div class="stat-card"><div class="label">${clientGmbLabel(k)}</div><div class="value">${clientGmbNum(d?.[k])}</div>
     ${changes[k]!==undefined?`<div style="font-size:11px;color:${Number(changes[k])>=0?'var(--accent2)':'#ff6b6b'};margin-top:4px;">${Number(changes[k])>=0?"+":""}${Number(changes[k]).toFixed(1)}% vs previous</div>`:""}</div>
   `).join("");
@@ -1035,26 +1089,10 @@ async function loadClientGmbLocation(){
   const status=document.getElementById("clientGmbProfileStatus");
   try{
     const d=await fetchJSON(`${API}/api/client/gmb/location`);
-    status.textContent=`${d.title||"Business Profile"} · ${d.location_id||""}`;
-    document.getElementById("clientGmbProfile").style.display="block";
-    document.getElementById("clientGmbProfileGrid").innerHTML=`
-      <div class="stat-card"><div class="label">Business</div><div class="value" style="font-size:20px;">${clientGmbEsc(d.title||"—")}</div></div>
-      <div class="stat-card"><div class="label">Status</div><div class="value" style="font-size:20px;">${clientGmbEsc(d.status||"—")}</div></div>
-      <div class="stat-card"><div class="label">Primary Category</div><div class="value" style="font-size:20px;">${clientGmbEsc(d.primary_category||"—")}</div></div>
-      <div class="stat-card"><div class="label">Phone</div><div class="value" style="font-size:20px;">${clientGmbEsc(d.phone||"—")}</div></div>`;
-    document.getElementById("clientGmbDetails").innerHTML=`<div class="section-title">Business details</div><table><tbody>
-      <tr><th>Address</th><td>${clientGmbEsc(d.address||"—")}</td></tr>
-      <tr><th>Website</th><td>${d.website?`<a href="${clientGmbEsc(d.website)}" target="_blank" rel="noopener" style="color:var(--accent);">${clientGmbEsc(d.website)}</a>`:"—"}</td></tr>
-      <tr><th>Maps</th><td>${d.maps_uri?`<a href="${clientGmbEsc(d.maps_uri)}" target="_blank" rel="noopener" style="color:var(--accent);">Open Google Maps</a>`:"—"}</td></tr>
-      <tr><th>Review link</th><td>${d.new_review_uri?`<a href="${clientGmbEsc(d.new_review_uri)}" target="_blank" rel="noopener" style="color:var(--accent);">Get reviews</a>`:"—"}</td></tr>
-      <tr><th>Additional categories</th><td>${clientGmbEsc((d.additional_categories||[]).join(", ")||"—")}</td></tr>
-      <tr><th>Description</th><td>${clientGmbEsc(d.description||"—")}</td></tr>
-    </tbody></table>`;
-    const days=["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"], names={MONDAY:"Monday",TUESDAY:"Tuesday",WEDNESDAY:"Wednesday",THURSDAY:"Thursday",FRIDAY:"Friday",SATURDAY:"Saturday",SUNDAY:"Sunday"};
-    document.getElementById("clientGmbHours").innerHTML=`<div class="section-title">Regular hours</div><table><tbody>${days.map(day=>`<tr><th>${names[day]}</th><td>${(d.hours?.[day]||[]).map(r=>`${String(r.open).padStart(2,"0")}:00–${String(r.close).padStart(2,"0")}:00`).join(", ")||"Closed"}</td></tr>`).join("")}</tbody></table>`;
+    status.className="loading";
+    status.textContent=d.title||"Business Profile";
   }catch(e){
     status.className="error"; status.textContent=e.message;
-    document.getElementById("clientGmbProfile").style.display="none";
   }
 }
 async function loadClientGmbSummary(){
@@ -1065,12 +1103,12 @@ async function loadClientGmbSummary(){
     let previous=null;
     if(prevRange) previous=await fetchJSON(`${API}/api/client/gmb/summary?${clientGmbDateParams(prevRange.start,prevRange.end).replace(/^&/,"")}`).catch(()=>null);
     const changes={};
-    if(previous) Object.keys(current).filter(k=>typeof current[k]==="number").forEach(k=>{
+    if(previous) CLIENT_GMB_METRICS.forEach(k=>{
       const a=Number(current[k]||0),b=Number(previous[k]||0); changes[k]=b?((a-b)/Math.abs(b))*100:(a?100:0);
     });
     el.innerHTML=clientGmbStats(current,changes);
     document.getElementById("clientGmbComparison").innerHTML=previous?`<table><thead><tr><th>Metric</th><th class="num">Current</th><th class="num">Previous</th><th class="num">Change</th></tr></thead><tbody>${
-      Object.keys(current).filter(k=>typeof current[k]==="number").map(k=>`<tr><td>${clientGmbLabel(k)}</td><td class="num">${clientGmbNum(current[k])}</td><td class="num">${clientGmbNum(previous[k])}</td><td class="num">${changes[k]>=0?"+":""}${Number(changes[k]).toFixed(1)}%</td></tr>`).join("")
+      CLIENT_GMB_METRICS.map(k=>`<tr><td>${clientGmbLabel(k)}</td><td class="num">${clientGmbNum(current[k])}</td><td class="num">${clientGmbNum(previous[k])}</td><td class="num">${changes[k]>=0?"+":""}${Number(changes[k]).toFixed(1)}%</td></tr>`).join("")
     }</tbody></table>`:'<div class="loading">Previous-period comparison unavailable.</div>';
   }catch(e){el.innerHTML=`<div class="error">${clientGmbEsc(e.message)}</div>`;}
 }
@@ -1081,25 +1119,132 @@ async function loadClientGmbTrend(){
     const metrics=[
       ["Impressions",r=>Number(r.business_impressions_desktop_maps||0)+Number(r.business_impressions_desktop_search||0)+Number(r.business_impressions_mobile_maps||0)+Number(r.business_impressions_mobile_search||0)],
       ["Website clicks",r=>Number(r.website_clicks||0)],["Calls",r=>Number(r.call_clicks||0)],
-      ["Directions",r=>Number(r.business_direction_requests||0)],["Conversations",r=>Number(r.business_conversations||0)],["Bookings",r=>Number(r.business_bookings||0)]
+      ["Directions",r=>Number(r.business_direction_requests||0)]
     ];
     if(clientGmbTrendChart)clientGmbTrendChart.destroy();
     const c=chartColors();
     clientGmbTrendChart=new Chart(document.getElementById("clientGmbTrendChart"),{type:"line",data:{labels,datasets:metrics.map(([label,fn])=>({label,data:d.rows.map(fn),tension:.25}))},options:{responsive:true,interaction:{mode:"index",intersect:false},scales:{x:{ticks:{color:c.muted},grid:{color:c.border}},y:{beginAtZero:true,ticks:{color:c.muted},grid:{color:c.border}}},plugins:{legend:{labels:{color:c.text}}}}});
+    if(clientGmbClicksChart)clientGmbClicksChart.destroy();
+    clientGmbClicksChart=new Chart(document.getElementById("clientGmbClicksChart"),{type:"bar",data:{labels,datasets:[{label:"Website clicks",data:d.rows.map(r=>Number(r.website_clicks||0)),backgroundColor:"#4f8cff"},{label:"Call clicks",data:d.rows.map(r=>Number(r.call_clicks||0)),backgroundColor:"#33c17a"}]},options:{responsive:true,interaction:{mode:"index",intersect:false},scales:{x:{stacked:true,ticks:{color:c.muted},grid:{color:c.border}},y:{stacked:true,beginAtZero:true,ticks:{color:c.muted,precision:0},grid:{color:c.border}}},plugins:{legend:{labels:{color:c.text}}}}});
+    clientGmbXRender(d.rows);
   }catch(e){document.getElementById("clientGmbTrendChart").parentElement.innerHTML+=`<div class="error">${clientGmbEsc(e.message)}</div>`;}
 }
+    /* ===== GMB extras: impression donuts, bar charts, mini charts, reviews ===== */
+    const clientGmbXCharts = {}, clientGmbXDonuts = {};
+    const clientGmbImpKeys = ["business_impressions_mobile_search", "business_impressions_desktop_search", "business_impressions_desktop_maps", "business_impressions_mobile_maps"];
+    function clientGmbXSum(rows, keys) { return rows.reduce((t, r) => t + keys.reduce((a, k) => a + Number(r[k] || 0), 0), 0); }
+    function clientGmbXDonut(id, items) {
+      const total = items.reduce((a, i) => a + i.value, 0);
+      if (clientGmbXDonuts[id]) { clientGmbXDonuts[id].destroy(); delete clientGmbXDonuts[id]; }
+      document.getElementById(id + "Total").innerHTML = `<b>${clientGmbNum(total)}</b><span>Impressions</span>`;
+      document.getElementById(id + "Legend").innerHTML = items.map(i => `<div class="gmb-lg"><span class="dot" style="background:${i.color}"></span><span class="nm">${clientGmbEsc(i.label)}</span><b>${clientGmbNum(i.value)}</b></div>`).join("");
+      if (!total) return;
+      clientGmbXDonuts[id] = new Chart(document.getElementById(id), {
+        type: "doughnut",
+        data: { labels: items.map(i => i.label), datasets: [{ data: items.map(i => i.value), backgroundColor: items.map(i => i.color), borderWidth: 0 }] },
+        options: { responsive: true, maintainAspectRatio: false, cutout: "70%", plugins: { legend: { display: false } } }
+      });
+    }
+    function clientGmbXBar(id, rows, keys, color) {
+      if (clientGmbXCharts[id]) clientGmbXCharts[id].destroy();
+      const c = chartColors();
+      const data = rows.map(r => keys.reduce((a, k) => a + Number(r[k] || 0), 0));
+      document.getElementById(id + "Total").textContent = clientGmbNum(data.reduce((a, b) => a + b, 0));
+      clientGmbXCharts[id] = new Chart(document.getElementById(id), {
+        type: "bar",
+        data: { labels: rows.map(r => r.date), datasets: [{ data, backgroundColor: color, borderRadius: 2 }] },
+        options: { responsive: true, scales: { x: { ticks: { color: c.muted, maxTicksLimit: 6 }, grid: { color: c.border } }, y: { beginAtZero: true, ticks: { color: c.muted, precision: 0 }, grid: { color: c.border } } }, plugins: { legend: { display: false, labels: { color: c.text } } } }
+      });
+    }
+    function clientGmbXMini(id, rows, key, color) {
+      if (clientGmbXCharts[id]) { clientGmbXCharts[id].destroy(); delete clientGmbXCharts[id]; }
+      const c = chartColors();
+      const data = rows.map(r => Number(r[key] || 0));
+      const total = data.reduce((a, b) => a + b, 0);
+      const cv = document.getElementById(id), em = document.getElementById(id + "Empty");
+      document.getElementById(id + "Total").textContent = clientGmbNum(total);
+      if (!total) { cv.style.display = "none"; em.style.display = "block"; return; }
+      cv.style.display = ""; em.style.display = "none";
+      clientGmbXCharts[id] = new Chart(cv, {
+        type: "line",
+        data: { labels: rows.map(r => r.date), datasets: [{ data, borderColor: color, backgroundColor: color, tension: .35, pointRadius: 0, borderWidth: 2 }] },
+        options: { responsive: true, scales: { x: { ticks: { color: c.muted, maxTicksLimit: 5 }, grid: { display: false } }, y: { beginAtZero: true, ticks: { color: c.muted, precision: 0 }, grid: { color: c.border } } }, plugins: { legend: { display: false, labels: { color: c.text } } } }
+      });
+    }
+    function clientGmbXRender(rows) {
+      document.getElementById("clientGmbExtras").style.display = "";
+      document.getElementById("clientGmbExtrasEmpty").style.display = "none";
+      const s = keys => clientGmbXSum(rows, keys);
+      clientGmbXDonut("clientGmbDonutPlatform", [
+        { label: "Mobile Search", value: s(["business_impressions_mobile_search"]), color: "#f6b94f" },
+        { label: "Desktop Search", value: s(["business_impressions_desktop_search"]), color: "#a7d055" },
+        { label: "Desktop Maps", value: s(["business_impressions_desktop_maps"]), color: "#7ac7f5" },
+        { label: "Mobile Maps", value: s(["business_impressions_mobile_maps"]), color: "#e58fc0" }
+      ]);
+      clientGmbXDonut("clientGmbDonutDevice", [
+        { label: "Mobile", value: s(["business_impressions_mobile_search", "business_impressions_mobile_maps"]), color: "#5ab8e6" },
+        { label: "Desktop", value: s(["business_impressions_desktop_search", "business_impressions_desktop_maps"]), color: "#a7d055" }
+      ]);
+      clientGmbXDonut("clientGmbDonutSurface", [
+        { label: "Search", value: s(["business_impressions_mobile_search", "business_impressions_desktop_search"]), color: "#5ab8e6" },
+        { label: "Maps", value: s(["business_impressions_mobile_maps", "business_impressions_desktop_maps"]), color: "#a7d055" }
+      ]);
+      clientGmbXBar("clientGmbImpBar", rows, clientGmbImpKeys, "#7ab4ee");
+      clientGmbXBar("clientGmbIntBar", rows, ["website_clicks", "call_clicks", "business_direction_requests"], "#7ab4ee");
+      clientGmbXMini("clientGmbMiniCalls", rows, "call_clicks", "#1a73e8");
+      clientGmbXMini("clientGmbMiniDir", rows, "business_direction_requests", "#1a73e8");
+      clientGmbXMini("clientGmbMiniWeb", rows, "website_clicks", "#1a73e8");
+    }
+    function clientGmbXClear() {
+      [clientGmbXCharts, clientGmbXDonuts].forEach(store => Object.keys(store).forEach(k => { if (store[k]) store[k].destroy(); delete store[k]; }));
+      document.getElementById("clientGmbExtras").style.display = "none";
+      document.getElementById("clientGmbExtrasEmpty").style.display = "block";
+    }
+    async function clientGmbLoadReviews() {
+      const val = document.getElementById("clientGmbRatingValue"), cnt = document.getElementById("clientGmbReviewCount"), list = document.getElementById("clientGmbReviewList");
+      try {
+        const url = `${API}/api/client/gmb/reviews?limit=10`;
+        const d = await fetchJSON(url);
+        val.textContent = d.average_rating ? `${Number(d.average_rating).toFixed(1)} ★` : "—";
+        cnt.textContent = clientGmbNum(d.total_reviews);
+        const stars = n => "★".repeat(n) + "☆".repeat(5 - n);
+        const rows = d.reviews || [];
+        list.className = "";
+        list.innerHTML = rows.length ? rows.map(r => `<div class="gmb-review"><div class="hd"><b>${clientGmbEsc(r.reviewer)}</b><span class="stars">${stars(r.rating)}</span><span class="dt">${clientGmbEsc((r.updated || r.created || "").slice(0, 10))}</span></div>${r.comment ? `<p>${clientGmbEsc(r.comment)}</p>` : ""}${r.reply ? `<div class="reply"><b>Owner reply:</b> ${clientGmbEsc(r.reply)}</div>` : ""}</div>`).join("") : '<div class="loading">No reviews yet.</div>';
+      } catch (e) {
+        val.textContent = "—"; cnt.textContent = "—";
+        list.className = "error";
+        list.textContent = e.message === "NO_GMB" ? "No GMB" : `Reviews unavailable: ${e.message}`;
+      }
+    }
 async function loadClientGmbKeywords(){
   const el=document.getElementById("clientGmbKeywords");
   try{
     const months=document.getElementById("clientGmbKeywordMonths").value;
     const d=await fetchJSON(`${API}/api/client/gmb/keywords?months_back=${months}`);
     const rows=d.rows||[];
-    el.innerHTML=rows.length?`<table><thead><tr><th>Search keyword</th><th class="num">Impressions</th></tr></thead><tbody>${rows.slice(0,50).map(r=>`<tr><td>${clientGmbEsc(r.keyword||"—")}</td><td class="num">${clientGmbNum(r.impressions)}</td></tr>`).join("")}</tbody></table>`:'<div class="loading">No search keyword data for this month.</div>';
+    el.innerHTML=rows.length?`<table><thead><tr><th>Search keyword</th><th class="num">Impressions</th></tr></thead><tbody>${rows.slice(0,50).map(r=>`<tr><td>${clientGmbEsc(r.keyword||"—")}</td><td class="num">${r.below_threshold?"&lt; ":""}${clientGmbNum(r.impressions)}</td></tr>`).join("")}</tbody></table>`:'<div class="loading">No search keyword data for this month.</div>';
   }catch(e){el.innerHTML=`<div class="error">${clientGmbEsc(e.message)}</div>`;}
 }
 async function loadClientGmbAll(){
   if(!checkDatesOrShowError())return;
-  await Promise.allSettled([loadClientGmbLocation(),loadClientGmbSummary(),loadClientGmbTrend(),loadClientGmbKeywords()]);
+  const content=document.getElementById("clientGmbContent");
+  const status=document.getElementById("clientGmbProfileStatus");
+  try{
+    const st=await fetchJSON(`${API}/api/client/gmb/status`);
+    if(!st.has_gmb){
+      content.style.display="none";
+      status.className="loading";
+      status.textContent="No GMB";
+      return;
+    }
+    content.style.display="";
+  }catch(e){
+    content.style.display="none";
+    status.className="error"; status.textContent=e.message;
+    return;
+  }
+  await Promise.allSettled([loadClientGmbLocation(),loadClientGmbSummary(),loadClientGmbTrend(),loadClientGmbKeywords(),clientGmbLoadReviews()]);
 }
 
 async function loadAll() {
@@ -1131,7 +1276,7 @@ function toggleTheme() {
 
 function refreshChartTheme() {
   const c = chartColors();
-  [trendChart, rankHistoryChart, ga4TrendChart, clientGmbTrendChart].forEach(chart => {
+  [trendChart, rankHistoryChart, ga4TrendChart, clientGmbTrendChart, clientGmbClicksChart, ...Object.values(clientGmbXCharts)].forEach(chart => {
     if (!chart) return;
     if (chart.options.scales.y) {
       chart.options.scales.y.ticks.color = c.muted;

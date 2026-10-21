@@ -16,6 +16,7 @@ Optional (only needed for list_accounts / list_locations_for_account):
 
 import time
 from datetime import date, timedelta
+from google.auth.transport.requests import AuthorizedSession
 from googleapiclient.discovery import build
 
 import gsc_client
@@ -367,6 +368,7 @@ def _totals(rows):
         "total_impressions": total_impressions,
         "website_clicks": totals.get("website_clicks", 0),
         "call_clicks": totals.get("call_clicks", 0),
+        "total_clicks": totals.get("website_clicks", 0) + totals.get("call_clicks", 0),
         "direction_requests": totals.get("business_direction_requests", 0),
         "conversations": totals.get("business_conversations", 0),
         "bookings": totals.get("business_bookings", 0),
@@ -420,9 +422,13 @@ def get_search_keywords(location_id: str, months_back: int = 1):
     rows = []
     for item in resp.get("searchKeywordsCounts", []):
         iv = item.get("insightsValue") or {}
+        # Google sends either an exact "value" or, for low volumes, only a
+        # "threshold" meaning "fewer than N" (usually 15) — flag it so the UI
+        # can show "< 15" instead of a misleading exact 15.
         rows.append({
             "keyword": item.get("searchKeyword"),
             "impressions": _to_int(iv.get("value") or iv.get("threshold")),
+            "below_threshold": not iv.get("value") and bool(iv.get("threshold")),
         })
     rows.sort(key=lambda r: -r["impressions"])
     return rows
@@ -446,3 +452,58 @@ def get_portfolio_summary(location_ids: dict, start_date: str = None, end_date: 
             errors.append({"site_url": site_url, "location_id": loc_id, "error": str(ex)})
     rows.sort(key=lambda r: -r["total_impressions"])
     return {"start_date": start_date, "end_date": end_date, "rows": rows, "errors": errors}
+
+
+# ---------------- reviews + rating (My Business API v4) ----------------
+# The Performance API has no rating/review data. Reviews still live only in the
+# legacy v4 endpoint:  accounts/{accountId}/locations/{locationId}/reviews
+# It uses the same business.manage scope, but "Google My Business API" must be
+# enabled in the Cloud project (and may need Google's access approval).
+
+_review_account_cache = {}   # location_id -> "accounts/123..."
+_STAR_VALUES = {"ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4, "FIVE": 5}
+
+
+def get_reviews(location_id: str, limit: int = 10):
+    creds = _creds_for_location(location_id)
+    http = AuthorizedSession(creds)
+
+    account_names = []
+    if location_id in _review_account_cache:
+        account_names = [_review_account_cache[location_id]]
+    else:
+        acct_service = build("mybusinessaccountmanagement", "v1", credentials=creds)
+        resp = acct_service.accounts().list().execute()
+        account_names = [a["name"] for a in resp.get("accounts", []) if a.get("name")]
+
+    last_error = None
+    for account_name in account_names:
+        r = http.get(
+            f"https://mybusiness.googleapis.com/v4/{account_name}/locations/{location_id}/reviews",
+            params={"pageSize": max(1, min(int(limit), 50)), "orderBy": "updateTime desc"},
+            timeout=30,
+        )
+        if r.status_code == 200:
+            _review_account_cache[location_id] = account_name
+            data = r.json()
+            reviews = []
+            for rv in data.get("reviews", []):
+                reviewer = rv.get("reviewer") or {}
+                reviews.append({
+                    "reviewer": "Anonymous" if reviewer.get("isAnonymous") else reviewer.get("displayName", "Google user"),
+                    "rating": _STAR_VALUES.get(rv.get("starRating"), 0),
+                    "comment": rv.get("comment", ""),
+                    "created": rv.get("createTime"),
+                    "updated": rv.get("updateTime"),
+                    "reply": (rv.get("reviewReply") or {}).get("comment"),
+                })
+            return {
+                "average_rating": data.get("averageRating"),
+                "total_reviews": int(data.get("totalReviewCount", 0) or 0),
+                "reviews": reviews,
+            }
+        last_error = f"{r.status_code}: {r.text[:300]}"
+
+    hint = (" — enable the 'Google My Business API' (v4) in your Google Cloud project "
+            "and make sure this Google account manages the listing.")
+    raise RuntimeError(f"Could not load reviews ({last_error or 'no Business Profile account found'}){hint}")
