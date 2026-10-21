@@ -1267,10 +1267,7 @@
       </div>
 
       <div class="grid-2">
-        <div class="chart-card">
-          <div class="section-title">Period Comparison</div>
-          <div id="gmbComparisonTable" class="loading">Loading...</div>
-        </div>
+        
         <div class="chart-card">
           <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
             <span>Search Keywords</span>
@@ -1287,19 +1284,15 @@
         </div>
       </div>
 
-      <div class="chart-card">
-        <div class="section-title">Clicks <span style="color:var(--muted); font-weight:400;">(website + call, per day)</span></div>
-        <canvas id="gmbClicksChart" height="70"></canvas>
-        <div id="gmbClicksEmpty" class="loading" style="display:none;">No GMB</div>
-      </div>
+      
 
       <div id="gmbExtras">
         <div class="gmb-grid-3">
-          <div class="chart-card"><div class="section-title">Impressions by platform &amp; device</div>
+          <div class="chart-card"><div class="section-title">platform &amp; device</div>
             <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="gmbDonutPlatform"></canvas><div class="gmb-donut-center" id="gmbDonutPlatformTotal"></div></div><div class="gmb-donut-legend" id="gmbDonutPlatformLegend"></div></div></div>
-          <div class="chart-card"><div class="section-title">Impressions by device</div>
+          <div class="chart-card"><div class="section-title">Desktop vs Mobile</div>
             <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="gmbDonutDevice"></canvas><div class="gmb-donut-center" id="gmbDonutDeviceTotal"></div></div><div class="gmb-donut-legend" id="gmbDonutDeviceLegend"></div></div></div>
-          <div class="chart-card"><div class="section-title">Impressions by surface</div>
+          <div class="chart-card"><div class="section-title">Search vs Maps</div>
             <div class="gmb-donut"><div class="gmb-donut-chart"><canvas id="gmbDonutSurface"></canvas><div class="gmb-donut-center" id="gmbDonutSurfaceTotal"></div></div><div class="gmb-donut-legend" id="gmbDonutSurfaceLegend"></div></div></div>
         </div>
 
